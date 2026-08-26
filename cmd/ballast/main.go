@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Command ballast is the label-driven backup daemon and its companion CLI.
 package main
 

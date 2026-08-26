@@ -46,5 +46,6 @@ deploy time.
 
 ## License
 
-GPL-3.0. You can run it, charge for it, and modify it. If you distribute a
-modified version, it stays open under the same license. See [LICENSE](LICENSE).
+GPL-3.0-or-later. You can run it, charge for it, and modify it. If you distribute a
+modified version, it stays open under the same license. Each source file carries an
+`SPDX-License-Identifier: GPL-3.0-or-later` header. See [LICENSE](LICENSE).

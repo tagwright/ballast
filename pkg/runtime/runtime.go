@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Package runtime abstracts a container runtime (Docker or Podman) behind the
 // small set of operations Ballast needs: discover containers and their mounts,
 // watch the socket for lifecycle changes, exec into a container to quiesce or
