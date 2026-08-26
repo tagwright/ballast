@@ -101,10 +101,20 @@ func runFilesystemBackup(ctx context.Context, spec *discovery.BackupSpec, repo e
 // The exec's stdout is wrapped in a streamWaitReader so that, once it is
 // fully drained, the dump's own exit code is checked before the reader
 // reports its final EOF to the engine's child process. A non-zero dump exit
-// is surfaced as a read error instead of a clean EOF, which makes the
-// engine's own backup command fail its stdin copy and abort without
-// producing a snapshot: a failed dump must never be recorded as an (empty or
-// truncated) snapshot.
+// is surfaced as a read error instead of a clean EOF wherever Go's io.Copy
+// loop observes it directly (e.g. if the engine's own backup command fails
+// its stdin copy and reports that as its error).
+//
+// That surfacing is best-effort, not a guarantee: os.Pipe (what os/exec
+// wires a generic io.Reader Stdin through) has no way to signal "the writer
+// errored" to the reading end, only a plain close, which looks exactly like
+// a clean EOF to the child. So restic may already have read a short (even
+// empty) stdin to what it sees as a normal end of input, and successfully
+// committed a truncated snapshot, before this function ever learns the dump
+// failed. To make sure a failed dump never leaves such a snapshot behind
+// regardless of that race, the dump's exit is always checked (not only when
+// wait hasn't already fired), and if it failed, any snapshot the engine
+// reports as written is explicitly deleted before returning the dump error.
 func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream discovery.StreamSpec, repo engine.Repo, d Deps) error {
 	sctx := ctx
 	if stream.Timeout > 0 {
@@ -132,21 +142,38 @@ func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream dis
 		Stdin:         wait,
 		StdinFilename: stream.Filename,
 	}
-	if _, err := d.Engine.Backup(sctx, req); err != nil {
-		return err
-	}
+	res, backupErr := d.Engine.Backup(sctx, req)
 
 	// The engine's child process may have stopped reading (or never started)
 	// without driving wait's Read to EOF, e.g. if Backup itself failed
-	// before consuming stdin. Whatever the engine did with the data, the
-	// dump's own exit code still matters: check it now if nothing has
-	// already.
+	// before consuming stdin. Check the dump's own exit unconditionally
+	// (not only when wait hasn't already fired) so wait.err below reflects
+	// it even when Backup reported success.
 	if !wait.waited {
-		if _, err := handle.Wait(); err != nil {
-			return fmt.Errorf("dump exited non-zero: %w", err)
+		if _, werr := handle.Wait(); werr != nil {
+			wait.waited = true
+			wait.waitErr = fmt.Errorf("dump exited non-zero: %w", werr)
 		}
 	}
-	return nil
+
+	if dumpErr := wait.err(); dumpErr != nil {
+		// The dump failed. Whatever the engine did with the partial (or
+		// empty) stdin it received, delete any snapshot it nonetheless
+		// wrote: see the doc comment above for why "Backup reported success"
+		// does not mean the dump succeeded, and note res.SnapshotID can be
+		// populated even when backupErr is also non-nil (engine.Restic.Backup
+		// parses a real summary out of stdout regardless of its own error,
+		// for exactly this reason).
+		if res.SnapshotID != "" {
+			delCtx := context.WithoutCancel(ctx)
+			if derr := d.Engine.DeleteSnapshot(delCtx, repo, res.SnapshotID); derr != nil {
+				return fmt.Errorf("%w (additionally failed to delete resulting snapshot %s: %v)", dumpErr, res.SnapshotID, derr)
+			}
+		}
+		return dumpErr
+	}
+
+	return backupErr
 }
 
 // streamWaitReader wraps a stream dump's stdout. On the first read that
@@ -160,6 +187,13 @@ type streamWaitReader struct {
 
 	waited  bool
 	waitErr error
+}
+
+// err returns the dump's non-zero-exit error, if Read has already observed
+// one (via EOF) or a caller has set it directly after calling wait itself.
+// It is nil if the dump hasn't been waited on yet or exited zero.
+func (s *streamWaitReader) err() error {
+	return s.waitErr
 }
 
 func (s *streamWaitReader) Read(p []byte) (int, error) {

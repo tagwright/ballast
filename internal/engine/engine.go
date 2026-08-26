@@ -36,6 +36,13 @@ type Engine interface {
 	// keep. It does not prune repository data; that is a separate step.
 	Forget(ctx context.Context, repo Repo, policy RetentionPolicy) error
 
+	// DeleteSnapshot removes a single snapshot by ID, independent of any
+	// retention policy. It exists for compensating cleanup: a stream backup
+	// whose dump command failed after the engine had already begun (or even
+	// finished) writing a snapshot from its partial stdout must not leave
+	// that truncated snapshot behind. It does not prune repository data.
+	DeleteSnapshot(ctx context.Context, repo Repo, id string) error
+
 	// Prune reclaims space from data no snapshot references.
 	Prune(ctx context.Context, repo Repo) error
 

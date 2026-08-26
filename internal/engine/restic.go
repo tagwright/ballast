@@ -103,14 +103,34 @@ func (r *Restic) Backup(ctx context.Context, req BackupRequest) (BackupResult, e
 		args = append(args, req.Paths...)
 	}
 
-	res, err := r.run(ctx, req.Repo, stdin, args...)
-	if err != nil {
-		return BackupResult{}, fmt.Errorf("engine: backup: %w", err)
-	}
+	res, runErr := r.run(ctx, req.Repo, stdin, args...)
 
-	result, err := parseBackupSummary(res.Stdout)
-	if err != nil {
-		return BackupResult{}, fmt.Errorf("engine: backup: %w", err)
+	// Parse stdout for a summary message even when runErr is set: for a
+	// --stdin backup, restic reads its stdin through an OS pipe, which has
+	// no way to signal "the writer errored" to the reading end, only a
+	// plain close indistinguishable from a clean end of input (see
+	// runStreamBackup's doc comment in the orchestrator package for the
+	// full mechanics). So restic itself can complete and exit 0, printing a
+	// real "summary" message with a real snapshot ID, while cmd.Wait()
+	// still surfaces a non-nil error here because Go's own stdin-copy
+	// goroutine failed. Returning that summary's SnapshotID alongside the
+	// error (instead of discarding it as BackupResult{}) is what lets a
+	// caller find and delete the snapshot restic wrote despite the failure,
+	// rather than losing track of it.
+	result, parseErr := parseBackupSummary(res.Stdout)
+	if parseErr != nil {
+		// No summary in stdout: nothing was written, or runErr already
+		// explains why there's no output to parse. Report whichever error
+		// is more informative, preferring runErr since a parse failure with
+		// no runErr (a summary-shaped restic invocation produced no summary
+		// line) still needs to surface as a backup failure.
+		if runErr != nil {
+			return BackupResult{}, fmt.Errorf("engine: backup: %w", runErr)
+		}
+		return BackupResult{}, fmt.Errorf("engine: backup: %w", parseErr)
+	}
+	if runErr != nil {
+		return result, fmt.Errorf("engine: backup: %w", runErr)
 	}
 	return result, nil
 }
@@ -195,6 +215,19 @@ func (r *Restic) Forget(ctx context.Context, repo Repo, policy RetentionPolicy) 
 	// its own schedule, never bundled into a forget.
 	if _, err := r.run(ctx, repo, nil, args...); err != nil {
 		return fmt.Errorf("engine: forget: %w", err)
+	}
+	return nil
+}
+
+// DeleteSnapshot removes a single snapshot by ID via `restic forget <id>`,
+// independent of any retention policy. No --prune here either, matching
+// Forget: reclaiming the now-unreferenced data is a separate, explicit step.
+func (r *Restic) DeleteSnapshot(ctx context.Context, repo Repo, id string) error {
+	if id == "" {
+		return errors.New("engine: delete snapshot: empty snapshot ID")
+	}
+	if _, err := r.run(ctx, repo, nil, "forget", id); err != nil {
+		return fmt.Errorf("engine: delete snapshot %s: %w", id, err)
 	}
 	return nil
 }
