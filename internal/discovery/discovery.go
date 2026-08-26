@@ -72,6 +72,13 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	}
 	spec.Tags = splitCSV(norm["tags"])
 
+	if spec.NotifySuppress, err = parseBool(norm, "notify.suppress", false); err != nil {
+		return nil, nil, err
+	}
+	if spec.NotifyOnSuccess, err = parseBool(norm, "notify.on-success", false); err != nil {
+		return nil, nil, err
+	}
+
 	if spec.Stop, err = parseBool(norm, "stop", false); err != nil {
 		return nil, nil, err
 	}

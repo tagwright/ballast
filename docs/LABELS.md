@@ -53,6 +53,8 @@ precedence between the two.
 | `stop` | bool | `false` | Stops the container for the duration of the filesystem backup, restarting it afterward. Requires `enable_stop: true` (or `BALLAST_ENABLE_STOP=true`). Incompatible with any `stream.<id>.*` label on the same service (a stopped container can't run a stream command). |
 | `schedule` | cron expression or alias (e.g. `@daily`) | global `schedule` from `ballast.yml` (itself defaulting to `@daily`) | This service's own backup schedule. |
 | `tags` | CSV | none | Extra tags appended to Ballast's own automatic tags on every snapshot for this service. |
+| `notify.suppress` | bool | `false` | Mutes this service's alert-channel notifications (both success and failure). The Gatus-style telemetry/health push still runs, since it isn't an alert. |
+| `notify.on-success` | bool | `false` | Notifies this service's successful backups at Warning level instead of Info, so successes surface on channels configured to only forward warnings and errors. Failures already notify at Error and are unaffected. |
 
 ## Notes
 
@@ -74,3 +76,8 @@ precedence between the two.
   channels, `host_roots`, global excludes) is set once in `ballast.yml`, not
   per label. See [ballast.example.yml](../ballast.example.yml) for that side
   of the configuration.
+- **Per-service channel routing is a possible future addition**, not
+  implemented today: `notify.suppress` and `notify.on-success` only control
+  whether and at what level a service notifies, not which configured beacon
+  channel(s) receive it. Every channel in `ballast.yml` still sees every
+  non-suppressed notification.

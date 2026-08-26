@@ -42,6 +42,18 @@ type BackupSpec struct {
 	Tags          []string // ballast.tags, appended to Ballast's own auto tags by the caller
 	Excludes      []string // ballast.exclude / ballast.exclude.<n>
 	ExcludeCaches bool     // ballast.exclude-caches, defaults to true
+
+	// NotifySuppress is ballast.notify.suppress: when true, the orchestrator
+	// skips the beacon Notify call for this service entirely (mutes alert
+	// channels), but never affects the telemetry Report call, since a health
+	// push is not an alert.
+	NotifySuppress bool
+	// NotifyOnSuccess is ballast.notify.on-success: when true, a successful
+	// backup notifies at beacon.LevelWarning instead of the default
+	// LevelInfo, so it surfaces on channels configured to only forward
+	// warnings and errors. Failures are unaffected; they already notify at
+	// LevelError.
+	NotifyOnSuccess bool
 }
 
 // StreamSpec is one ballast.stream.<id> dump: a command run inside the

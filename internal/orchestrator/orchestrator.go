@@ -194,6 +194,12 @@ func runHook(ctx context.Context, rt runtime.Runtime, containerID string, hook *
 // and hands both to d.Notifier. It runs on a context detached from ctx (with
 // its own bounded timeout) so a cancelled run context never suppresses the
 // outcome report, and it tolerates a nil Notifier by doing nothing.
+//
+// spec.NotifySuppress mutes the Notify call only: the Report call (telemetry
+// / health push) always runs regardless, since it is not an alert channel.
+// On success, spec.NotifyOnSuccess raises the notification from LevelInfo to
+// LevelWarning so it surfaces on warn-and-above channels; failures always
+// notify at LevelError either way.
 func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runErr error, elapsed time.Duration, log *slog.Logger) {
 	if d.Notifier == nil {
 		return
@@ -208,10 +214,15 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 		"duration": elapsed.Round(time.Second).String(),
 	}
 
+	successLevel := beacon.LevelInfo
+	if spec.NotifyOnSuccess {
+		successLevel = beacon.LevelWarning
+	}
+
 	n := beacon.Notification{
 		Title:  fmt.Sprintf("Backup OK: %s", spec.Service),
 		Body:   fmt.Sprintf("Backup completed for %s in %s.", spec.Service, elapsed.Round(time.Second)),
-		Level:  beacon.LevelInfo,
+		Level:  successLevel,
 		Fields: fields,
 	}
 	message := ""
@@ -222,8 +233,10 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 		message = runErr.Error()
 	}
 
-	if err := d.Notifier.Notify(nctx, n); err != nil {
-		log.Warn("orchestrator: notify failed", "service", spec.Service, "error", err)
+	if !spec.NotifySuppress {
+		if err := d.Notifier.Notify(nctx, n); err != nil {
+			log.Warn("orchestrator: notify failed", "service", spec.Service, "error", err)
+		}
 	}
 
 	h := beacon.Health{
