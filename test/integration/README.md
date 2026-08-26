@@ -3,7 +3,7 @@
 Real end-to-end tests of Ballast against a live Docker socket: build the
 image, stand up throwaway labeled containers with known data, drive Ballast
 through real backups, snapshot listings, and restores, diff the restored
-data against the original, and tear everything down. Seven scripts, each
+data against the original, and tear everything down. Thirteen scripts, each
 proving a different path:
 
 - **`run.sh`** — filesystem backup/restore against a local repo: a single
@@ -44,6 +44,39 @@ proving a different path:
   that `ballast.notify.suppress=true` produces none, and that
   `ballast.notify.on-success=true` escalates a successful backup's message
   to Warning-level.
+- **`run-watch.sh`** — the daemon's live socket-event watch path
+  (`internal/daemon/watch.go`), never exercised before this: a real
+  `ballast daemon` started before a labeled container even exists, a real
+  Docker "start" event discovering and backing it up, `docker rm -f`
+  driving a real die+destroy event pair, "daemon: service unregistered" in
+  the logs, and a full schedule interval afterward confirming no further
+  backup fires.
+- **`run-splay.sh`** — three services on the same schedule alias, proving
+  `Concurrency=1` (the grammar's default) actually serializes their backups:
+  each writes whole-second start/end markers around an artificial
+  `exec.pre` delay into a shared host directory, and no two services'
+  intervals overlap. Splay-slot distinctness for the same three service
+  names is proven separately, at the unit level
+  (`internal/schedule/schedule_test.go`), since a real `@daily` wait is
+  impractical here.
+- **`run-volumes.sh`** — multi-volume backup and narrowing: a service with
+  two named volumes backs up both; `ballast.volumes=<name>` narrows to one;
+  `ballast.volumes.exclude=<name>` excludes one; and a fourth service proves
+  `ballast.exclude=<glob>` drops matching files and
+  `ballast.exclude-caches=true` drops a real `CACHEDIR.TAG`-tagged
+  directory's contents from the restored snapshot.
+- **`run-dupe.sh`** — two containers resolving to the same service name via
+  `ballast.name`: the daemon logs the rejection of the second, keeps
+  running, and the latest snapshot after another schedule round still only
+  ever contains the first container's data.
+- **`run-alias.sh`** — a service labeled entirely under `tagwright.backup.*`
+  (no `ballast.*` label at all): a real backup, snapshot tags, and restore,
+  proving the org-namespaced alias works identically end to end.
+- **`run-conflict.sh`** — a container labeling the same suffix differently
+  under both prefixes (`ballast.repo=A` vs `tagwright.backup.repo=B`):
+  rejected by the daemon's discovery pass (logged, never backed up) and by
+  `ballast backup <service>`, which surfaces the real conflict instead of a
+  misleading "not found".
 
 See [docs/TESTING.md](../../docs/TESTING.md) for the full test methodology
 and an honest coverage matrix across all of Ballast, not just this harness.
@@ -73,6 +106,12 @@ bash test/integration/run-retention.sh     # keep-last retention, prune, check
 bash test/integration/run-hooks.sh         # exec.pre/exec.post hooks + failure path
 bash test/integration/run-stop.sh          # ballast.stop stop-for-consistency + discovery rejection
 bash test/integration/run-notify.sh        # live ntfy delivery + suppress/on-success controls
+bash test/integration/run-watch.sh         # daemon socket-event watch: discover-and-add, remove-and-drop
+bash test/integration/run-splay.sh         # multiple services, same schedule, Concurrency=1 serialization
+bash test/integration/run-volumes.sh       # multi-volume backup, volumes narrowing, exclude/exclude-caches
+bash test/integration/run-dupe.sh          # duplicate service name rejection
+bash test/integration/run-alias.sh         # tagwright.backup.* alias end to end
+bash test/integration/run-conflict.sh      # ballast.*/tagwright.backup.* prefix conflict rejection
 bash test/integration/<script>.sh --keep   # leave ballast-itest-* objects and generated files for inspection
 ```
 
@@ -87,7 +126,9 @@ filesystem paths at all, so this only matters for the rest).
 
 - `ballast.itest.yml`, `stream.itest.yml`, `s3.itest.yml`,
   `retention.itest.yml`, `hooks.itest.yml`, `stop.itest.yml`,
-  `notify.itest.yml` — committed. Minimal configs for each script: one
+  `notify.itest.yml`, `watch.itest.yml`, `splay.itest.yml`,
+  `volumes.itest.yml`, `dupe.itest.yml`, `alias.itest.yml`,
+  `conflict.itest.yml` — committed. Minimal configs for each script: one
   destination each (`local` for all but `run-s3.sh`, which points
   `s3test` at the MinIO container). None configure `notifications` except
   `notify.itest.yml`, whose whole point is exercising that config path
@@ -98,11 +139,15 @@ filesystem paths at all, so this only matters for the rest).
   `BALLAST_ENABLE_EXEC=true`, and `stop.itest.yml` needs
   `BALLAST_ENABLE_STOP=true`, each set by its script on the ballast run
   containers rather than in the config file, since those gates are meant
-  to be scoped to exactly where they're used.
+  to be scoped to exactly where they're used (`splay.itest.yml` follows the
+  same pattern: its script sets `BALLAST_ENABLE_EXEC=true` on the daemon
+  container only, not in the file).
 - `run.sh`, `run-stream.sh`, `run-s3.sh`, `run-retention.sh`,
-  `run-hooks.sh`, `run-stop.sh`, `run-notify.sh` — committed. Each
-  automates its own build, service/backend setup, backup, snapshots,
-  restore or retention/prune/check, and cleanup.
+  `run-hooks.sh`, `run-stop.sh`, `run-notify.sh`, `run-watch.sh`,
+  `run-splay.sh`, `run-volumes.sh`, `run-dupe.sh`, `run-alias.sh`,
+  `run-conflict.sh` — committed. Each automates its own build,
+  service/backend setup, backup, snapshots, restore or
+  retention/prune/check, and cleanup.
 - `secrets/repo-master-key` — generated, gitignored, shared by every
   script except `run-s3.sh` (which needs MinIO credentials alongside it,
   so it uses its own `secrets-s3/`). A fresh `openssl rand -base64 32`
@@ -113,8 +158,13 @@ filesystem paths at all, so this only matters for the rest).
   the exact same secret-name wiring a real R2 destination uses).
 - `repos/`, `restore/`, `repos-stream/`, `restore-stream/`, `restore-s3/`,
   `repos-retention/`, `repos-hooks/`, `restore-hooks/`, `repos-stop/`,
-  `restore-stop/`, `repos-notify/` — generated, gitignored. The restic
-  repositories and restore targets for each script's run (`run-s3.sh`
-  writes to MinIO, not a local repo path, so it has no `repos-s3/`;
-  `run-retention.sh` and `run-notify.sh` never restore, so neither has a
-  `restore-*/` directory).
+  `restore-stop/`, `repos-notify/`, `repos-watch/`, `repos-splay/`,
+  `markers-splay/`, `repos-volumes/`, `restore-volumes/`, `repos-dupe/`,
+  `repos-alias/`, `restore-alias/`, `repos-conflict/` — generated,
+  gitignored. The restic repositories and restore targets for each script's
+  run (`run-s3.sh` writes to MinIO, not a local repo path, so it has no
+  `repos-s3/`; `run-retention.sh`, `run-notify.sh`, `run-watch.sh`,
+  `run-dupe.sh`, and `run-conflict.sh` never restore into a local
+  directory, so none of them has a `restore-*/` directory; `markers-splay/`
+  is `run-splay.sh`'s shared bind-mounted host directory for its
+  serialization-proof start/end marker files, not a restic repo at all).
