@@ -44,6 +44,49 @@ Repository passwords and object-storage credentials never go in labels, where
 name, and Ballast resolves the value at runtime from files that SOPS decrypts at
 deploy time.
 
+## Deploy
+
+Ballast runs as one container, alongside the services it backs up in the same
+compose file (or stack). It needs the container socket to discover and inspect
+services, the Docker volumes root to read what it backs up, and a secrets
+directory that SOPS fills in at deploy time. All three mounts are read-only:
+
+```yaml
+services:
+  ballast:
+    image: ghcr.io/tagwright/ballast:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/volumes:/var/lib/docker/volumes:ro
+      - ./ballast.yml:/etc/ballast/ballast.yml:ro
+      - /run/ballast/secrets:/run/ballast/secrets:ro
+    command: ["daemon", "--config", "/etc/ballast/ballast.yml"]
+```
+
+A service opts in the same way regardless of where Ballast itself runs, with
+labels next to the service they describe:
+
+```yaml
+services:
+  silverbullet:
+    image: ghcr.io/silverbulletmd/silverbullet
+    volumes:
+      - sb-data:/space
+    labels:
+      ballast.enable: "true"
+      ballast.repo: r2
+      ballast.retention: "7d 4w 6m"
+```
+
+Secrets never live in the compose file or the labels. SOPS decrypts them at
+deploy time into the directory mounted at `/run/ballast/secrets`, one file per
+secret name, and `ballast.yml` and any `ballast.*` label reference a secret by
+that name. The repository master key, which every service's per-repo password
+derives from, is the secret named `repo-master-key`.
+
+See [ballast.example.yml](ballast.example.yml) for a full annotated config.
+
 ## License
 
 GPL-3.0-or-later. You can run it, charge for it, and modify it. If you distribute a

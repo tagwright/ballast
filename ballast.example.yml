@@ -1,0 +1,58 @@
+# Example ballast.yml. Every field here is optional; an empty or missing
+# file is valid, and any scalar global default below can also be set (or
+# overridden) via a BALLAST_* environment variable instead. Nothing in this
+# file is ever a literal secret: destination env values and channel/sink
+# settings that hold credentials are secret NAMES, resolved at runtime from
+# /run/ballast/secrets/<name> (or a BALLAST_SECRET_<NAME> env var).
+
+# Named backup destinations. A service selects one by name via its
+# ballast.repo label; default_destination below picks one when a service
+# sets no label at all.
+destinations:
+  local:
+    # Engine-native repository location. restic syntax lives here,
+    # deliberately kept out of the label grammar.
+    url: /repos
+
+  r2:
+    url: s3:https://<account-id>.r2.cloudflarestorage.com/ballast-backups
+    # Maps the env var name restic's child process needs to a secret name,
+    # never to the credential itself.
+    env:
+      AWS_ACCESS_KEY_ID: r2-access-key-id
+      AWS_SECRET_ACCESS_KEY: r2-secret-access-key
+
+# Destination used when a service sets no ballast.repo label.
+default_destination: local
+
+# Global defaults. Any of these can be overridden per service by the
+# matching ballast.* label, and any of them can be overridden here (or
+# supplied with no file at all) by the matching BALLAST_* env var.
+schedule: "@daily"
+retention: "7d 4w 6m"
+secrets_dir: /run/ballast/secrets
+concurrency: 1
+
+# Alert channels. Each fires on the orchestrator's outcome per its
+# min_level. Settings that are credentials are secret names, never literal
+# tokens or URLs with embedded auth.
+notifications:
+  - type: ntfy
+    min_level: warn
+    settings:
+      topic: ballast-alerts
+      # Secret name, resolved at runtime, not a literal ntfy access token.
+      token: ntfy-ballast-token
+
+  - type: discord
+    min_level: error
+    settings:
+      # Secret name naming a Discord webhook URL, not the URL itself.
+      webhook_url: discord-ballast-webhook
+
+# Health and status push sinks, separate from the alert channels above.
+telemetry:
+  - type: gatus
+    settings:
+      # Secret name naming the Gatus external-endpoint push URL/token.
+      push_url: gatus-ballast-push-url
