@@ -70,6 +70,14 @@ zero configuration. See [ballast.example.yml](ballast.example.yml) if you
 also bind-mount host directories from outside the Docker volumes root; those
 need an explicit `host_roots` entry.
 
+## Releases
+
+Images are published to `ghcr.io/tagwright/ballast` automatically when a
+`v*` tag is pushed. After the first publish, the ghcr package's visibility
+needs to be flipped to public once in the GitHub package settings, since a
+newly created package defaults to private regardless of what the workflow
+pushes.
+
 ## Podman
 
 Ballast talks to Podman the same way it talks to Docker: Podman exposes a
