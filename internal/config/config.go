@@ -151,6 +151,20 @@ const (
 	defaultSecretsDir  = "/run/ballast/secrets"
 )
 
+// defaultDockerVolumesRoot is the standard Docker named-volume data root.
+// Ballast's recommended deploy mounts this same path into the Ballast
+// container at the same location
+// (/var/lib/docker/volumes:/var/lib/docker/volumes:ro), so a named volume's
+// host-side mount source (/var/lib/docker/volumes/<name>/_data) already
+// resolves to a path Ballast can read with no host_roots configuration at
+// all.
+//
+// This default targets Docker's standard layout. Rootless Podman and any
+// installation with a custom Docker data-root (dockerd --data-root) still
+// need an explicit host_roots entry pointing at wherever their volumes
+// actually live.
+const defaultDockerVolumesRoot = "/var/lib/docker/volumes"
+
 // Load reads the YAML config file at path, overlays BALLAST_* environment
 // variables onto the global-default scalars (env wins over the file), and
 // applies defaults to anything still unset.
@@ -244,4 +258,20 @@ func applyDefaults(cfg *Config) {
 	if cfg.SecretsDir == "" {
 		cfg.SecretsDir = defaultSecretsDir
 	}
+	cfg.HostRoots = withDefaultHostRoots(cfg.HostRoots)
+}
+
+// withDefaultHostRoots always seeds the standard Docker named-volume root
+// mapped to itself as a baseline, so filesystem auto-discovery resolves
+// named-volume mounts out of the box even with an otherwise-empty config:
+// the README's "add one label" promise depends on HostRoots never being
+// empty by default. Any host_roots entries the user configures in
+// ballast.yml are merged on top of (never replace) this baseline, so a user
+// who adds a bind-mount root does not lose named-volume discovery.
+func withDefaultHostRoots(existing map[string]string) map[string]string {
+	merged := map[string]string{defaultDockerVolumesRoot: defaultDockerVolumesRoot}
+	for k, v := range existing {
+		merged[k] = v
+	}
+	return merged
 }
