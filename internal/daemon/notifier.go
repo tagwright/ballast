@@ -12,11 +12,16 @@ import (
 	"github.com/tagwright/ballast/internal/secret"
 )
 
-// buildNotifier maps cfg's notification channels and telemetry sinks onto
+// BuildNotifier maps cfg's notification channels and telemetry sinks onto
 // beacon's own config types and builds a Beacon. If cfg configures no
 // notification channel at all, beacon's built-in "log" backend is added as
 // the always-on floor, so a run's outcome is never silently unreported.
-func buildNotifier(cfg *config.Config, resolver secret.Resolver) (*beacon.Beacon, error) {
+//
+// This is the single shared wiring path: the daemon uses it to build the
+// notifier a scheduled run reports through, and the CLI's "ballast backup"
+// uses it (via commonDeps.withNotifier) so an ad hoc run reports through
+// exactly the same channels.
+func BuildNotifier(cfg *config.Config, resolver secret.Resolver) (*beacon.Beacon, error) {
 	channels := make([]beacon.ChannelConfig, 0, len(cfg.Notifications))
 	for i, c := range cfg.Notifications {
 		level, err := parseLevel(c.MinLevel)

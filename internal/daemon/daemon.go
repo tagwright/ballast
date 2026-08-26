@@ -50,7 +50,7 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 		master = nil
 	}
 
-	notifier, err := buildNotifier(cfg, resolver)
+	notifier, err := BuildNotifier(cfg, resolver)
 	if err != nil {
 		return fmt.Errorf("daemon: build notifier: %w", err)
 	}

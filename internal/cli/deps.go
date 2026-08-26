@@ -12,6 +12,7 @@ import (
 	"github.com/tagwright/beacon"
 
 	"github.com/tagwright/ballast/internal/config"
+	"github.com/tagwright/ballast/internal/daemon"
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
 	"github.com/tagwright/ballast/internal/orchestrator"
@@ -72,9 +73,11 @@ func buildCommonDeps(configPath string) (*commonDeps, error) {
 
 // withNotifier builds d.Notifier from d.Config, for the one command
 // ("backup") whose run should report its outcome through the same channels
-// a scheduled daemon run would.
+// a scheduled daemon run would. It calls internal/daemon's BuildNotifier
+// directly rather than duplicating that wiring here, so the CLI and the
+// daemon can never drift apart on how a config maps onto beacon's types.
 func (d *commonDeps) withNotifier() error {
-	notifier, err := buildNotifier(d.Config, d.Resolver)
+	notifier, err := daemon.BuildNotifier(d.Config, d.Resolver)
 	if err != nil {
 		return fmt.Errorf("build notifier: %w", err)
 	}
@@ -93,56 +96,6 @@ func dockerSocket() string {
 		return strings.TrimPrefix(v, "unix://")
 	}
 	return defaultDockerSocket
-}
-
-// buildNotifier maps cfg's notification channels and telemetry sinks onto
-// beacon's own config types, mirroring internal/daemon's own wiring
-// (notifier.go) so "ballast backup" reports through exactly the same
-// channels a scheduled run would. If cfg configures no notification
-// channel at all, beacon's built-in "log" backend is added as the
-// always-on floor.
-func buildNotifier(cfg *config.Config, resolver secret.Resolver) (*beacon.Beacon, error) {
-	channels := make([]beacon.ChannelConfig, 0, len(cfg.Notifications))
-	for i, c := range cfg.Notifications {
-		level, err := parseNotifyLevel(c.MinLevel)
-		if err != nil {
-			return nil, fmt.Errorf("notification channel %d (%s): %w", i, c.Type, err)
-		}
-		channels = append(channels, beacon.ChannelConfig{
-			Type:     c.Type,
-			MinLevel: level,
-			Settings: c.Settings,
-		})
-	}
-	if len(channels) == 0 {
-		channels = append(channels, beacon.ChannelConfig{Type: "log"})
-	}
-
-	telemetry := make([]beacon.TelemetryConfig, 0, len(cfg.Telemetry))
-	for _, t := range cfg.Telemetry {
-		telemetry = append(telemetry, beacon.TelemetryConfig{
-			Type:     t.Type,
-			Settings: t.Settings,
-		})
-	}
-
-	beaconCfg := beacon.Config{Channels: channels, Telemetry: telemetry}
-	return beacon.New(beaconCfg, beacon.SecretResolver(resolver))
-}
-
-// parseNotifyLevel maps a config.ChannelConfig.MinLevel string onto a
-// beacon.Level. An empty value means "receive everything" (LevelInfo).
-func parseNotifyLevel(s string) (beacon.Level, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "info":
-		return beacon.LevelInfo, nil
-	case "warn", "warning":
-		return beacon.LevelWarning, nil
-	case "error":
-		return beacon.LevelError, nil
-	default:
-		return 0, fmt.Errorf("unknown notification level %q", s)
-	}
 }
 
 // discoverService lists rt's containers and returns the BackupSpec for the
