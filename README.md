@@ -255,6 +255,15 @@ by the time it starts, the secrets directory already holds plaintext files
 named after each secret, and that resolution (file first, then a
 `BALLAST_SECRET_<NAME>` environment variable) is all it does.
 
+## Testing
+
+Unit tests (`go test ./...`) plus a `test/integration/` harness that drives
+the real binary against a live Docker socket: filesystem backup/restore,
+the daemon scheduler, the stream (exec-to-`restic --stdin`) dump path, and
+the S3 backend via a local MinIO. See [docs/TESTING.md](docs/TESTING.md)
+for the full methodology and a coverage matrix that's honest about what
+remains unproven.
+
 ## Status
 
 Ballast is built and running: discovery, scheduling, restic-backed backup and
