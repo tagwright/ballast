@@ -22,6 +22,6 @@
 /test/integration/restore/
 /test/integration/repos-stream/
 /test/integration/restore-stream/
-/test/integration/repos-s3/
 /test/integration/restore-s3/
 /test/integration/secrets/
+/test/integration/secrets-s3/
