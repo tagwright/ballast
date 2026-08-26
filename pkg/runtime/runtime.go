@@ -10,8 +10,9 @@
 // Until then it lives here and is shaped against exactly one real consumer, which
 // is the discipline that keeps the abstraction honest.
 //
-// The Docker adapter lands first. A Podman adapter follows behind the same
-// interface, absorbing the socket-path, rootless-stats, and journald differences.
+// The Docker adapter lands first. The Podman adapter follows behind the
+// same interface, talking to Podman's Docker-compatible compat API and
+// absorbing the socket-path and compose-label differences.
 package runtime
 
 import (
