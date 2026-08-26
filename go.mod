@@ -6,11 +6,9 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/tagwright/beacon v0.1.0
-	github.com/tagwright/core v0.0.0
+	github.com/tagwright/core v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-replace github.com/tagwright/core => ../core
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
