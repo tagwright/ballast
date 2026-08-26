@@ -35,6 +35,14 @@ Three layers, in increasing order of how much they actually prove:
    - `run-s3.sh` — the restic S3 backend against a local MinIO standing in
      for Cloudflare R2 (see the R2 note below), including the
      `destination.env` → child-process-env → restic credential path.
+   - `run-retention.sh` — forces five real backups of a `ballast.retention.
+     last=3` labeled service and asserts the *exact* surviving snapshot set
+     (not just a count), then runs a real daemon with short
+     `BALLAST_PRUNE_SCHEDULE`/`BALLAST_CHECK_SCHEDULE` intervals and confirms
+     both `internal/daemon/maintenance.go` actions complete without error,
+     then runs `restic check --read-data` directly against the repository.
+     See the Retention/Prune/Check section below for exactly what this does
+     and does not prove.
 
    See `test/integration/README.md` for how to run each one.
 
@@ -65,15 +73,16 @@ Categories, precisely:
 | Filesystem backup + restore | **Integration-proven** | `run.sh`: canary file in a named volume, backed up, restored, byte-diffed. |
 | Daemon scheduler | **Integration-proven** | `run.sh`: `@every 1m` fires a real second scheduled backup with no CLI involvement. |
 | `host_roots` default volume resolution | **Unit-tested + Integration-proven** | Unit: `internal/discovery/volumes_test.go` (default Docker volumes root, and a user `host_roots` entry merging with it rather than replacing it). Integration: every fs-backup itest run (`run.sh`, `run-s3.sh`) resolves a named volume with zero `host_roots` configuration, exactly the "add one label" README claim. |
-| HKDF password derivation (`internal/secret/derive.go`) | **Integration-proven, indirectly** | Every itest backup+restore round trip only works if `DeriveRepoPassword` returns the *same* password for the same service name twice (once at write, once at read) — this has succeeded across all three itest suites. There is, however, **no unit test pinning the frozen v1 byte output** (salt, info string, output length, encoding) the file's own doc comment calls a frozen contract; a regression there could silently orphan every repository without any current test catching it before a real restore attempt. Recommended next unit test, not yet written. |
+| HKDF password derivation (`internal/secret/derive.go`) | **Unit-tested (golden value) + Integration-proven (indirectly)** | Unit: `internal/secret/derive_test.go`'s `TestDeriveRepoPasswordGoldenValues` pins `DeriveRepoPassword`'s output for a fixed master and three service names against exact base64 strings computed once with this code and hardcoded as constants — this is the tripwire the doc comment's "frozen v1 contract" warning asked for: a regression in the salt, info template, output length, or encoding fails this test immediately instead of silently orphaning every repository. `TestDeriveRepoPasswordDeterministic` and `TestDeriveRepoPasswordDistinctPerService` cover the two properties `ballast key <service>` depends on (same input always reproduces the same password; different service names never collide). `TestLoadMasterRejectsShortMaster` / `TestLoadMasterAcceptsMinimumLength` pin the `minMasterKeyBytes` (32) boundary on both sides. Integration: every itest backup+restore round trip only works if the same derivation reproduces the same password at write and read time, which has succeeded across all four itest suites. |
 | Label discovery / parsing (`internal/discovery`) | **Unit-tested (partial) + Integration-proven (partial)** | Unit: default host-roots merge, `ballast.notify.*` labels including the `tagwright.backup.*` alias. Integration: `ballast.enable`, `ballast.repo`, `ballast.volumes=none`, and `ballast.stream.<id>.*` end to end (`run-stream.sh`); named-volume mount discovery (`run.sh`, `run-s3.sh`). Not covered by any test: `exclude`/`exclude.<n>`, `retention.*` label parsing, `tags`, the `ballast.*`/`tagwright.backup.*` conflict-rejection rule, and `ballast.name` service-identity override. |
 | Stream / DB-dump path (exec → `restic backup --stdin`) | **Integration-proven** | `run-stream.sh`: a real Postgres `pg_dump` piped through docker exec into restic, restored, and diffed against the original schema + canary row. Also proves the `BALLAST_ENABLE_EXEC` gate and `stream=<id>` snapshot tagging. |
 | Stream dump failure path | **Integration-proven** | `run-stream.sh`: a bogus `stream.<id>.command` (`false`) makes the backup abort with a non-zero exit and leaves **no snapshot** behind. This was not true before this test suite found it — see the "Bug found and fixed" section below. |
 | S3 backend + credential passing | **Integration-proven (via MinIO)** | `run-s3.sh`: a local MinIO stands in for the S3-compatible endpoint; the destination's `env` map resolves through the same secret → child-process-env → restic path a real S3-compatible destination uses, and the backup, snapshot listing, and restore all work against it, with objects confirmed present in the bucket. |
 | Real Cloudflare R2 | **Not yet tested — requires operator credentials** | R2 is just an S3-compatible endpoint from restic's point of view; MinIO exercises the identical code path (`internal/engine/restic.go`'s `childEnv`, the `s3:` URL scheme, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env). What MinIO cannot prove: R2-specific network/auth behavior (real TLS endpoint, real R2 account restrictions, R2's actual latency/throughput characteristics). Someone with real R2 credentials should run a manual backup/restore against a throwaway R2 bucket before depending on this in production. |
-| Retention / forget | **Integration-proven (execution only)** | `Forget` runs as part of every itest backup with no error. No itest asserts the actual keep/prune *outcome* against a specific policy (e.g., that `keep-daily=2` really leaves exactly 2 daily snapshots after several runs). |
-| Prune | **Compile-only** | Thin wrapper over `restic prune`; only reachable via the daemon's `PruneSchedule` (`@weekly` default) or a direct `Engine.Prune` call, neither exercised by any itest. |
-| Check | **Compile-only** | Same story as Prune: reachable via `CheckSchedule` (`@monthly` default), never exercised. |
+| Retention / forget, count-based (`keep-last`) | **Integration-proven, outcome asserted** | `run-retention.sh`: a service labeled `ballast.retention.last=3` is backed up five times (each real backup also runs `Forget` with that policy, exactly as production does — see `runBackupSteps`). The script records the snapshot ID each run produces and asserts the final surviving set is *exactly* the 3 newest (iterations 3, 4, 5), i.e. that `keep-last` forgets the right snapshots, not merely that `forget` exits 0. |
+| Retention / forget, time-based (`keep-daily`/`keep-weekly`/`keep-monthly`/`keep-yearly`/`keep-within`) | **Not asserted** | Deliberately not exercised: proving these deterministically needs snapshots with controlled, spread-out timestamps (real days/weeks apart, or a faked clock), which this harness does not attempt. `keep-last` was chosen instead specifically because it is assertable with real, back-to-back runs. The code path is identical (`internal/engine/restic.go`'s `Forget` builds one `restic forget` invocation from whichever `--keep-*` flags the policy sets), so this is a real, not merely theoretical, gap — restic's own retention math for the time-based keeps is untested by Ballast itself. |
+| Prune | **Integration-proven** | `run-retention.sh`: after the keep-last forget above has actually removed data, a real daemon with a short `BALLAST_PRUNE_SCHEDULE` runs prune (`internal/daemon/maintenance.go`'s scheduled path, the same one production uses) and the script confirms from the daemon's own logs that it completed with no error, then re-lists snapshots to confirm the repository is still valid (all 3 survivors still present) afterward. |
+| Check | **Integration-proven, including `--read-data`** | `run-retention.sh`: the daemon's `BALLAST_CHECK_SCHEDULE` path runs `Check(ctx, repo, false)` (matching `maintenance.go`, which hardcodes `readData=false` for the scheduled path) and the script confirms a clean completion from the daemon logs. Separately, since no CLI command or schedule ever passes `readData=true`, the script also shells out directly to the same `restic` binary bundled in `ballast:itest` and runs `restic check --read-data` against the same repository (using the password `ballast key` derives), confirming "no errors were found" against real pack data. |
 | Notification channels actually firing | **Not yet tested (from Ballast's side)** | Every itest config sets no `notifications`, so beacon's built-in `log` fallback channel fires on every backup — that proves the `Notify`/`Report` call sites work and don't error. Actual delivery logic for `ntfy`, `discord`, `smtp`, `webhook` lives in the `github.com/tagwright/beacon` module, outside this repo, and firing a real external channel needs a live endpoint (a real ntfy topic, Discord webhook, SMTP relay) that doesn't belong in a repo-local automated run. |
 | Gatus telemetry sink | **Not yet tested** | Same boundary as notifications: lives in beacon, needs a real Gatus push-URL target. No itest configures `telemetry`. |
 | Exec pre/post hooks (`ballast.exec.pre`/`.post`) | **Not yet tested** | Discovery's label parsing for `exec.pre`/`exec.post` (`internal/discovery/fields.go`'s `parseHook`) is structurally identical to the stream-command parsing the stream itest exercises, but the orchestrator's `runHook` — the actual exec, timeout, and non-zero-exit-warns-but-doesn't-abort behavior — has never been run by any test, unit or integration. |
@@ -103,15 +112,34 @@ before returning the dump's failure). See the commit history for the full
 explanation; `run-stream.sh`'s failure-path check now asserts zero snapshots
 land after a failed dump, and would catch a regression.
 
+Writing `run-retention.sh`'s final `restic check --read-data` step found a
+second thing worth recording, though it was a bug in the *harness script*,
+not in Ballast itself: the first draft mounted the repository directory
+read-only (`:ro`) for that direct `restic` invocation, on the reasoning that
+`check` never writes snapshot or pack data. `restic check` still takes an
+exclusive repository lock for its duration, which requires writing a lock
+file under `<repo>/locks/`; against a read-only mount that write fails and
+restic retries forever with growing backoff, hanging indefinitely instead of
+producing a clean error. Fixed by dropping `:ro` from that one mount in
+`test/integration/run-retention.sh`. Worth remembering operationally too:
+nothing in Ballast's own engine or daemon code assumes a writable repo mount
+for `check` (`internal/engine/restic.go`'s `Check` issues a plain `restic
+check [--read-data]`), so a real deployment that mounts a repository
+read-only for defense-in-depth would hit the identical hang.
+
 ## What's still unproven, bluntly
 
 - **Real R2.** MinIO proves the code path; it does not prove R2 itself. Run
   a manual backup/restore against a throwaway R2 bucket before trusting a
   production R2 destination.
-- **Retention math.** Nothing asserts that a `keep-daily`/`keep-weekly`/etc.
-  policy actually forgets the snapshots it should and keeps the ones it
-  should, only that the `forget` call itself doesn't error.
-- **Prune and check.** Never run by any test.
+- **Time-based retention** (`keep-daily`/`keep-weekly`/`keep-monthly`/
+  `keep-yearly`/`keep-within`). `keep-last` is now proven with an exact
+  surviving-set assertion (`run-retention.sh`), but the time-based keeps
+  need snapshots spread across real (or faked) time to assert
+  deterministically, which no itest attempts. This is restic's own
+  retention math, driven by whichever `--keep-*` flags
+  `internal/engine/restic.go`'s `Forget` sets from the policy, so it is a
+  real gap in what Ballast itself has verified, not just an academic one.
 - **Real notification delivery and Gatus telemetry.** Both live in the
   `beacon` module and need live external endpoints to prove; only the
   in-process call sites are exercised here (via the `log` fallback
