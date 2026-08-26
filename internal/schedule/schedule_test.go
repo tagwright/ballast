@@ -127,6 +127,38 @@ func TestDailySplayLandsInsideWindow(t *testing.T) {
 	}
 }
 
+// TestDailySplayDistinctAcrossThreeServices proves the fnv splay spreads a
+// small fleet of services all set to the same period alias across
+// different slots inside the window, not just two (the existing
+// TestHourlySplayWithinHourAndDistinctPerName only proves pairwise
+// distinctness for @hourly). This is the unit-level half of the itest
+// suite's multi-service splay proof (test/integration/run-splay.sh), which
+// demonstrates concurrency serialization with real @every firings instead
+// of a real @daily wait, and leans on this test for the splay-slot
+// distinctness claim.
+func TestDailySplayDistinctAcrossThreeServices(t *testing.T) {
+	window := mustWindow(t, "01:00", "05:00")
+	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+
+	names := []string{"ballast-itest-splay-a", "ballast-itest-splay-b", "ballast-itest-splay-c"}
+	slots := make(map[string]time.Time, len(names))
+	for _, name := range names {
+		next, err := Parse(name, "@daily", window)
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", name, err)
+		}
+		slots[name] = next(after)
+	}
+
+	for i, a := range names {
+		for _, b := range names[i+1:] {
+			if slots[a].Equal(slots[b]) {
+				t.Fatalf("services %q and %q landed on the same @daily slot %v, want distinct slots", a, b, slots[a])
+			}
+		}
+	}
+}
+
 func TestDailyDoesNotFireAtCanonicalMidnight(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
 	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
