@@ -70,6 +70,47 @@ zero configuration. See [ballast.example.yml](ballast.example.yml) if you
 also bind-mount host directories from outside the Docker volumes root; those
 need an explicit `host_roots` entry.
 
+## Podman
+
+Ballast talks to Podman the same way it talks to Docker: Podman exposes a
+Docker-compatible socket API alongside its native one, and Ballast's Podman
+adapter is the same client pointed at that socket. Set the runtime and mount
+Podman's socket instead of Docker's:
+
+```yaml
+services:
+  ballast:
+    image: ghcr.io/tagwright/ballast:latest
+    restart: unless-stopped
+    volumes:
+      - /run/podman/podman.sock:/run/podman/podman.sock:ro
+      - ./ballast.yml:/etc/ballast/ballast.yml:ro
+      - /run/ballast/secrets:/run/ballast/secrets:ro
+    command: ["daemon", "--config", "/etc/ballast/ballast.yml"]
+```
+
+```yaml
+runtime: podman
+```
+
+or `BALLAST_RUNTIME=podman` in the environment. If `runtime` is left unset
+Ballast talks to Docker, so nothing changes for an existing Docker deploy.
+
+The socket path above is the rootful default. A rootless Podman socket lives
+at `$XDG_RUNTIME_DIR/podman/podman.sock`, typically
+`/run/user/<uid>/podman/podman.sock`; mount whichever one your Podman is
+actually running, and Ballast finds it on its own with no `socket` setting
+needed. Set `socket:` in `ballast.yml` (or `BALLAST_SOCKET`) only to point at
+a nonstandard path.
+
+Rootless Podman stores named-volume data under
+`$HOME/.local/share/containers/storage/volumes`, not
+`/var/lib/docker/volumes`, so the zero-configuration volume discovery the
+Docker deploy above gets for free does not apply. Add an explicit
+`host_roots` entry mapping that path (mounted read-only into the Ballast
+container) to itself, the same way you would for any bind mount outside the
+Docker volumes root. See [ballast.example.yml](ballast.example.yml).
+
 A service opts in the same way regardless of where Ballast itself runs, with
 labels next to the service they describe:
 
@@ -212,8 +253,10 @@ Ballast is built and running: discovery, scheduling, restic-backed backup and
 restore, retention, and notifications all work end to end. What's not there
 yet:
 
-- The Docker adapter is the only container runtime supported. A Podman
-  adapter is planned but not built.
+- Docker and Podman are both supported, talking to the same
+  Docker-compatible socket API. Podman is the non-default choice: set
+  `runtime: podman` in `ballast.yml` (or `BALLAST_RUNTIME=podman`) and mount
+  Podman's socket instead of Docker's. See [Podman](#podman) below.
 - restic is the only backup engine. The engine interface is designed to hold
   a second one, but nothing else implements it yet.
 

@@ -23,8 +23,8 @@ import (
 	"github.com/tagwright/ballast/pkg/runtime"
 )
 
-// defaultDockerSocket is used when neither DOCKER_HOST nor any future
-// config field names a socket path.
+// defaultDockerSocket is used when cfg.Runtime is "docker" and neither
+// cfg.Socket nor DOCKER_HOST names a socket path.
 const defaultDockerSocket = "/var/run/docker.sock"
 
 // Run loads configPath, wires up every collaborator, runs an initial
@@ -55,7 +55,10 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 		return fmt.Errorf("daemon: build notifier: %w", err)
 	}
 
-	rt := runtime.NewDocker(dockerSocket())
+	rt, err := buildRuntime(cfg)
+	if err != nil {
+		return fmt.Errorf("daemon: %w", err)
+	}
 	defer func() {
 		if err := rt.Close(); err != nil {
 			logger.Warn("daemon: close runtime", "error", err)
@@ -103,14 +106,48 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	return nil
 }
 
-// dockerSocket resolves the Docker API socket path: DOCKER_HOST if set
-// (with a "unix://" scheme prefix stripped, since NewDocker wants a bare
-// path), otherwise the conventional default.
-func dockerSocket() string {
+// buildRuntime constructs the Runtime adapter cfg.Runtime selects: Docker
+// (the default) or Podman, both talking to a Docker Engine API-compatible
+// socket. Podman's own default-socket resolution (the rootless
+// XDG_RUNTIME_DIR path, falling back to the rootful system socket) is left
+// to runtime.NewPodman when cfg.Socket and CONTAINER_HOST are both unset,
+// so that logic lives in one place.
+func buildRuntime(cfg *config.Config) (runtime.Runtime, error) {
+	switch cfg.Runtime {
+	case "", "docker":
+		return runtime.NewDocker(dockerSocket(cfg)), nil
+	case "podman":
+		return runtime.NewPodman(podmanSocket(cfg)), nil
+	default:
+		return nil, fmt.Errorf("unknown runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
+	}
+}
+
+// dockerSocket resolves the Docker API socket path: cfg.Socket if set,
+// otherwise DOCKER_HOST (with a "unix://" scheme prefix stripped, since
+// NewDocker wants a bare path), otherwise the conventional default.
+func dockerSocket(cfg *config.Config) string {
+	if cfg.Socket != "" {
+		return cfg.Socket
+	}
 	if v := os.Getenv("DOCKER_HOST"); v != "" {
 		return strings.TrimPrefix(v, "unix://")
 	}
 	return defaultDockerSocket
+}
+
+// podmanSocket resolves the Podman API socket path: cfg.Socket if set,
+// otherwise CONTAINER_HOST (with a "unix://" scheme prefix stripped, the
+// same convention podman-remote itself uses), otherwise empty, which tells
+// runtime.NewPodman to fall back to its own rootless/rootful default.
+func podmanSocket(cfg *config.Config) string {
+	if cfg.Socket != "" {
+		return cfg.Socket
+	}
+	if v := os.Getenv("CONTAINER_HOST"); v != "" {
+		return strings.TrimPrefix(v, "unix://")
+	}
+	return ""
 }
 
 // schedulerConfig maps cfg onto schedule.Config: cfg.Window is a single

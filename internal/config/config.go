@@ -147,6 +147,18 @@ type Config struct {
 
 	// Telemetry is the list of health/status push sinks, e.g. Gatus.
 	Telemetry []TelemetryConfig `yaml:"telemetry,omitempty"`
+
+	// Runtime selects the container engine Ballast talks to: "docker" or
+	// "podman". Overridable by BALLAST_RUNTIME. Defaults to "docker".
+	Runtime string `yaml:"runtime,omitempty"`
+
+	// Socket is the API socket path for whichever engine Runtime selects.
+	// Overridable by BALLAST_SOCKET. Empty means "resolve the engine's own
+	// conventional default": internal/daemon and internal/cli fall back to
+	// DOCKER_HOST (docker) or CONTAINER_HOST (podman) when set, and
+	// otherwise to /var/run/docker.sock for docker or the rootless/rootful
+	// podman.sock path runtime.NewPodman resolves on its own for podman.
+	Socket string `yaml:"socket,omitempty"`
 }
 
 // Default values applied to any Config that leaves the corresponding field
@@ -155,6 +167,7 @@ const (
 	defaultSchedule    = "@daily"
 	defaultConcurrency = 1
 	defaultSecretsDir  = "/run/ballast/secrets"
+	defaultRuntime     = "docker"
 )
 
 // defaultDockerVolumesRoot is the standard Docker named-volume data root.
@@ -194,6 +207,10 @@ func Load(path string) (*Config, error) {
 
 	if err := overlayEnv(cfg); err != nil {
 		return nil, err
+	}
+
+	if cfg.Runtime != "" && cfg.Runtime != "docker" && cfg.Runtime != "podman" {
+		return nil, fmt.Errorf("config: runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
 	}
 
 	applyDefaults(cfg)
@@ -245,6 +262,12 @@ func overlayEnv(cfg *Config) error {
 	}
 	if v, ok := os.LookupEnv("BALLAST_CHECK_SCHEDULE"); ok {
 		cfg.CheckSchedule = v
+	}
+	if v, ok := os.LookupEnv("BALLAST_RUNTIME"); ok {
+		cfg.Runtime = v
+	}
+	if v, ok := os.LookupEnv("BALLAST_SOCKET"); ok {
+		cfg.Socket = v
 	}
 
 	if v, ok := os.LookupEnv("BALLAST_ENABLE_EXEC"); ok {
@@ -330,6 +353,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.SecretsDir == "" {
 		cfg.SecretsDir = defaultSecretsDir
+	}
+	if cfg.Runtime == "" {
+		cfg.Runtime = defaultRuntime
 	}
 	cfg.HostRoots = withDefaultHostRoots(cfg.HostRoots)
 }

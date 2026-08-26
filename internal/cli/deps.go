@@ -20,8 +20,9 @@ import (
 	"github.com/tagwright/ballast/pkg/runtime"
 )
 
-// defaultDockerSocket is used when DOCKER_HOST names no socket, matching
-// internal/daemon's own default.
+// defaultDockerSocket is used when cfg.Runtime is "docker" and neither
+// cfg.Socket nor DOCKER_HOST names a socket, matching internal/daemon's own
+// default.
 const defaultDockerSocket = "/var/run/docker.sock"
 
 // commonDeps holds the collaborators every subcommand except "daemon" and
@@ -61,10 +62,15 @@ func buildCommonDeps(configPath string) (*commonDeps, error) {
 		master = nil
 	}
 
+	rt, err := buildRuntime(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build runtime: %w", err)
+	}
+
 	return &commonDeps{
 		Config:   cfg,
 		Resolver: resolver,
-		Runtime:  runtime.NewDocker(dockerSocket()),
+		Runtime:  rt,
 		Engine:   engine.NewRestic(""),
 		Master:   master,
 		Logger:   logger,
@@ -85,17 +91,52 @@ func (d *commonDeps) withNotifier() error {
 	return nil
 }
 
+// buildRuntime constructs the Runtime adapter cfg.Runtime selects, the same
+// way internal/daemon.buildRuntime does: Docker (the default) or Podman,
+// both talking to a Docker Engine API-compatible socket. Duplicated rather
+// than exported from internal/daemon, since that package's Run is meant to
+// be the daemon's single self-contained wiring path.
+func buildRuntime(cfg *config.Config) (runtime.Runtime, error) {
+	switch cfg.Runtime {
+	case "", "docker":
+		return runtime.NewDocker(dockerSocket(cfg)), nil
+	case "podman":
+		return runtime.NewPodman(podmanSocket(cfg)), nil
+	default:
+		return nil, fmt.Errorf("unknown runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
+	}
+}
+
 // dockerSocket resolves the Docker API socket path the same way
-// internal/daemon.dockerSocket does: DOCKER_HOST if set (with a "unix://"
-// scheme prefix stripped, since runtime.NewDocker wants a bare path),
-// otherwise the conventional default. Duplicated rather than exported from
-// internal/daemon, since that package's Run is meant to be the daemon's
-// single self-contained wiring path.
-func dockerSocket() string {
+// internal/daemon.dockerSocket does: cfg.Socket if set, otherwise
+// DOCKER_HOST (with a "unix://" scheme prefix stripped, since
+// runtime.NewDocker wants a bare path), otherwise the conventional default.
+// Duplicated rather than exported from internal/daemon, since that
+// package's Run is meant to be the daemon's single self-contained wiring
+// path.
+func dockerSocket(cfg *config.Config) string {
+	if cfg.Socket != "" {
+		return cfg.Socket
+	}
 	if v := os.Getenv("DOCKER_HOST"); v != "" {
 		return strings.TrimPrefix(v, "unix://")
 	}
 	return defaultDockerSocket
+}
+
+// podmanSocket resolves the Podman API socket path the same way
+// internal/daemon.podmanSocket does: cfg.Socket if set, otherwise
+// CONTAINER_HOST (with a "unix://" scheme prefix stripped), otherwise
+// empty, which tells runtime.NewPodman to fall back to its own
+// rootless/rootful default.
+func podmanSocket(cfg *config.Config) string {
+	if cfg.Socket != "" {
+		return cfg.Socket
+	}
+	if v := os.Getenv("CONTAINER_HOST"); v != "" {
+		return strings.TrimPrefix(v, "unix://")
+	}
+	return ""
 }
 
 // discoverService lists rt's containers and returns the BackupSpec for the

@@ -39,6 +39,18 @@ retention: "daily=7,weekly=4,monthly=6"
 secrets_dir: /run/ballast/secrets
 concurrency: 1
 
+# Container runtime Ballast talks to: "docker" (the default) or "podman",
+# both over a Docker Engine API-compatible socket. Overridable by
+# BALLAST_RUNTIME. See the Podman section of README.md.
+# runtime: docker
+
+# API socket path for whichever runtime above is selected. Overridable by
+# BALLAST_SOCKET. Left unset, Ballast resolves the engine's own
+# conventional default (DOCKER_HOST/CONTAINER_HOST if set, otherwise
+# /var/run/docker.sock for docker or the rootless/rootful podman.sock path
+# for podman).
+# socket: /var/run/docker.sock
+
 # Host-side path prefixes Ballast has mounted, mapped to the path they
 # appear under inside the Ballast container, so a bind-mount's host source
 # (from container inspection) can be resolved to a path Ballast can read.

@@ -76,6 +76,13 @@ precedence between the two.
   channels, `host_roots`, global excludes) is set once in `ballast.yml`, not
   per label. See [ballast.example.yml](../ballast.example.yml) for that side
   of the configuration.
+- **The compose service/project fallback in `name` works the same under
+  Podman.** podman-compose (and `podman compose`) label containers with the
+  same `com.docker.compose.project`/`com.docker.compose.service` pair Docker
+  uses, so `ballast.name`'s fallback to the compose service name resolves
+  identically regardless of which runtime is selected. See the Podman
+  section of [README.md](../README.md) for selecting the runtime itself,
+  which is a `ballast.yml`/env setting, not a label.
 - **Per-service channel routing is a possible future addition**, not
   implemented today: `notify.suppress` and `notify.on-success` only control
   whether and at what level a service notifies, not which configured beacon
