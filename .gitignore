@@ -24,6 +24,11 @@
 /test/integration/restore-stream/
 /test/integration/restore-s3/
 /test/integration/repos-retention/
+/test/integration/repos-hooks/
+/test/integration/restore-hooks/
+/test/integration/repos-stop/
+/test/integration/restore-stop/
+/test/integration/repos-notify/
 /test/integration/secrets/
 /test/integration/secrets-s3/
 /test/integration/retention-pw.tmp
