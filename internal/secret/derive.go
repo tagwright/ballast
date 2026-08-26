@@ -47,9 +47,11 @@ const repoKeyLength = 32
 // contract itself: it exists to catch an obviously-too-short master (a typo,
 // a placeholder value, a short password) before it is used as HKDF IKM,
 // where HKDF would silently accept it and derive passwords from weak
-// entropy. It is deliberately conservative, well under the ~44 characters
-// `openssl rand -base64 32` produces.
-const minMasterKeyBytes = 16
+// entropy. It sits at 32 to reject a hand-typed or placeholder master while
+// comfortably admitting any master generated the recommended way: the ~44
+// characters `openssl rand -base64 32` produces, a 64-character hex form, or
+// 32 raw bytes all clear it.
+const minMasterKeyBytes = 32
 
 // DeriveRepoPassword derives the restic repository password for service from
 // master, using HKDF-SHA256.
