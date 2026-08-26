@@ -29,6 +29,15 @@
 /test/integration/repos-stop/
 /test/integration/restore-stop/
 /test/integration/repos-notify/
+/test/integration/repos-watch/
+/test/integration/repos-splay/
+/test/integration/markers-splay/
+/test/integration/repos-volumes/
+/test/integration/restore-volumes/
+/test/integration/repos-dupe/
+/test/integration/repos-alias/
+/test/integration/restore-alias/
+/test/integration/repos-conflict/
 /test/integration/secrets/
 /test/integration/secrets-s3/
 /test/integration/retention-pw.tmp
