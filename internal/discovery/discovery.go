@@ -37,7 +37,21 @@ import (
 func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, error) {
 	norm, err := normalizeLabels(c.Labels)
 	if err != nil {
-		return nil, nil, err
+		// norm could not be built at all, so none of the usual label-derived
+		// fields (in particular ballast.name) are available. Still resolve a
+		// best-effort service identity from what does not depend on norm
+		// (resolveServiceName's compose-service and container-name
+		// fallbacks both work fine against a nil map), and return it
+		// alongside the error rather than a nil spec: every caller that
+		// matches a container by BackupSpec.Service before checking the
+		// error (internal/cli's backup.go and deps.go's discoverService)
+		// needs a non-nil spec to find this container at all, exactly like
+		// the validate() error path below.
+		return &BackupSpec{
+			Service:       resolveServiceName(c, nil),
+			ContainerID:   c.ID,
+			ContainerName: c.Name,
+		}, nil, err
 	}
 
 	enabled, err := parseBool(norm, "enable", false)
@@ -64,9 +78,11 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	if spec.Retention, err = parseRetention(norm); err != nil {
 		return nil, nil, err
 	}
-	if spec.Excludes, err = parseExcludes(norm); err != nil {
+	labelExcludes, err := parseExcludes(norm)
+	if err != nil {
 		return nil, nil, err
 	}
+	spec.Excludes = mergeExcludes(cfg.Exclude, labelExcludes)
 	if spec.ExcludeCaches, err = parseBool(norm, "exclude-caches", true); err != nil {
 		return nil, nil, err
 	}
@@ -127,6 +143,25 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// mergeExcludes combines cfg's global glob-exclude list with a service's own
+// ballast.exclude/ballast.exclude.<n> patterns. Per config.Config.Exclude's
+// doc comment the global list is additive, not a fallback default: it always
+// applies alongside whatever the service labels add, unlike retention (Fork
+// 2), which replaces wholesale. Returns nil, not an empty slice, when both
+// are empty, matching every other optional spec field's zero value.
+func mergeExcludes(global, perService []string) []string {
+	if len(global) == 0 {
+		return perService
+	}
+	if len(perService) == 0 {
+		return global
+	}
+	out := make([]string, 0, len(global)+len(perService))
+	out = append(out, global...)
+	out = append(out, perService...)
+	return out
 }
 
 // validate enforces the grammar's cross-field rules that discovery, not the
