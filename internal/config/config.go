@@ -2,9 +2,10 @@
 
 // Package config loads Ballast's daemon configuration: named destinations,
 // global defaults for anything a label can also set, and the notification
-// and telemetry channel lists. The config file is optional; every scalar
-// global default can also be set (or overridden) by a BALLAST_* environment
-// variable, so env-only operation works with no file at all.
+// and telemetry channel lists. The config file is optional; every global
+// default (scalar, list, or map) can also be set (or overridden) by a
+// BALLAST_* environment variable, so env-only operation works with no file
+// at all.
 //
 // Config never holds a literal secret value. Destination.Env and the
 // notification/telemetry Settings maps name secrets (bare logical names,
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -86,7 +88,8 @@ type Config struct {
 
 	// Splay turns the deterministic per-service splay of period aliases
 	// (@daily, @hourly, ...) on or off. Raw cron and "@every <dur>" schedules
-	// are never splayed regardless of this setting.
+	// are never splayed regardless of this setting. Overridable by
+	// BALLAST_SPLAY.
 	Splay bool `yaml:"splay,omitempty"`
 
 	// Retention is the default retention policy string applied when a
@@ -95,18 +98,21 @@ type Config struct {
 	Retention string `yaml:"retention,omitempty"`
 
 	// Exclude is the global glob-exclude list, additive to any per-service
-	// ballast.exclude labels.
+	// ballast.exclude labels. Overridable by BALLAST_EXCLUDE, a
+	// comma-separated list.
 	Exclude []string `yaml:"exclude,omitempty"`
 
 	// DiscoverExclude lists mount name/path patterns skipped during
 	// auto-discovery (tmpfs, sockets, localtime-class noise) on top of the
-	// runtime's own built-in filters.
+	// runtime's own built-in filters. Overridable by
+	// BALLAST_DISCOVER_EXCLUDE, a comma-separated list.
 	DiscoverExclude []string `yaml:"discover_exclude,omitempty"`
 
 	// HostRoots maps a host-side path prefix Ballast has mounted to the path
 	// it appears under inside the Ballast container, so bind-mount sources
 	// discovered from container inspection can be resolved to a backupable
-	// path.
+	// path. Overridable by BALLAST_HOST_ROOTS, a comma-separated list of
+	// "host=mount" pairs.
 	HostRoots map[string]string `yaml:"host_roots,omitempty"`
 
 	// SecretsDir is the directory named secrets are resolved from.
@@ -166,8 +172,8 @@ const (
 const defaultDockerVolumesRoot = "/var/lib/docker/volumes"
 
 // Load reads the YAML config file at path, overlays BALLAST_* environment
-// variables onto the global-default scalars (env wins over the file), and
-// applies defaults to anything still unset.
+// variables onto the global defaults (env wins over the file), and applies
+// defaults to anything still unset.
 //
 // path is optional: an empty path, or a path that does not exist, is not an
 // error. Load returns a default Config in that case, so env-only operation
@@ -196,8 +202,8 @@ func Load(path string) (*Config, error) {
 }
 
 // overlayEnv applies the BALLAST_* environment variables that back the
-// scalar global defaults. Any variable that is set wins over whatever the
-// config file (or the zero value) supplied.
+// global defaults. Any variable that is set wins over whatever the config
+// file (or the zero value) supplied.
 func overlayEnv(cfg *Config) error {
 	if v, ok := os.LookupEnv("BALLAST_SCHEDULE"); ok {
 		cfg.Schedule = v
@@ -205,8 +211,28 @@ func overlayEnv(cfg *Config) error {
 	if v, ok := os.LookupEnv("BALLAST_WINDOW"); ok {
 		cfg.Window = v
 	}
+	if v, ok := os.LookupEnv("BALLAST_SPLAY"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("config: BALLAST_SPLAY: %w", err)
+		}
+		cfg.Splay = b
+	}
 	if v, ok := os.LookupEnv("BALLAST_RETENTION"); ok {
 		cfg.Retention = v
+	}
+	if v, ok := os.LookupEnv("BALLAST_EXCLUDE"); ok {
+		cfg.Exclude = splitEnvList(v)
+	}
+	if v, ok := os.LookupEnv("BALLAST_DISCOVER_EXCLUDE"); ok {
+		cfg.DiscoverExclude = splitEnvList(v)
+	}
+	if v, ok := os.LookupEnv("BALLAST_HOST_ROOTS"); ok {
+		hostRoots, err := parseHostRootsEnv(v)
+		if err != nil {
+			return fmt.Errorf("config: BALLAST_HOST_ROOTS: %w", err)
+		}
+		cfg.HostRoots = hostRoots
 	}
 	if v, ok := os.LookupEnv("BALLAST_DEFAULT_DESTINATION"); ok {
 		cfg.DefaultDestination = v
@@ -244,6 +270,53 @@ func overlayEnv(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// splitEnvList splits a comma-separated BALLAST_* environment value into a
+// list, trimming whitespace and dropping empty elements. An empty value
+// (the variable set to "") yields nil, clearing whatever the config file
+// supplied.
+func splitEnvList(v string) []string {
+	if v == "" {
+		return nil
+	}
+	fields := strings.Split(v, ",")
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// parseHostRootsEnv parses a BALLAST_HOST_ROOTS value: a comma-separated
+// list of "host=mount" pairs, the env equivalent of the host_roots map in
+// ballast.yml. An empty value yields an empty (non-nil) map, so
+// applyDefaults still seeds it with the default Docker volumes root.
+func parseHostRootsEnv(v string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, pair := range strings.Split(v, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid pair %q, want host=mount", pair)
+		}
+		host := strings.TrimSpace(parts[0])
+		mount := strings.TrimSpace(parts[1])
+		if host == "" || mount == "" {
+			return nil, fmt.Errorf("invalid pair %q, want host=mount", pair)
+		}
+		out[host] = mount
+	}
+	return out, nil
 }
 
 // applyDefaults fills in the sane defaults for anything still unset after
