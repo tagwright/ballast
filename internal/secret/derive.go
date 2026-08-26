@@ -41,6 +41,16 @@ const repoKeyInfoPrefix = "service:"
 // encoding.
 const repoKeyLength = 32
 
+// minMasterKeyBytes is the smallest master-key length LoadMaster accepts, in
+// bytes of its resolved text form (see the LoadMaster doc comment). It is an
+// edge guard around the frozen construction above, not part of the frozen
+// contract itself: it exists to catch an obviously-too-short master (a typo,
+// a placeholder value, a short password) before it is used as HKDF IKM,
+// where HKDF would silently accept it and derive passwords from weak
+// entropy. It is deliberately conservative, well under the ~44 characters
+// `openssl rand -base64 32` produces.
+const minMasterKeyBytes = 16
+
 // DeriveRepoPassword derives the restic repository password for service from
 // master, using HKDF-SHA256.
 //
@@ -74,6 +84,12 @@ func DeriveRepoPassword(master []byte, service string) (string, error) {
 
 // LoadMaster resolves and returns the master key repo passwords are derived
 // from, using resolve to look up MasterSecretName.
+//
+// The master must be a whitespace-free single-line text secret, such as the
+// output of `openssl rand -base64 32`. Its text bytes are used verbatim as
+// the HKDF IKM in DeriveRepoPassword: they are not base64-decoded, so the
+// master is treated as an opaque string of bytes, not as encoded key
+// material.
 func LoadMaster(resolve Resolver) ([]byte, error) {
 	if resolve == nil {
 		return nil, fmt.Errorf("secret: load master: nil resolver")
@@ -85,6 +101,9 @@ func LoadMaster(resolve Resolver) ([]byte, error) {
 	}
 	if v == "" {
 		return nil, fmt.Errorf("secret: load master: %q resolved to an empty value", MasterSecretName)
+	}
+	if len(v) < minMasterKeyBytes {
+		return nil, fmt.Errorf("secret: load master: %s too short (got %d bytes, need at least %d; generate with: openssl rand -base64 32)", MasterSecretName, len(v), minMasterKeyBytes)
 	}
 
 	return []byte(v), nil
