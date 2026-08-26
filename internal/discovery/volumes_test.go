@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/tagwright/ballast/internal/config"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // TestDiscoverDefaultHostRootsResolvesNamedVolume proves the "add one label

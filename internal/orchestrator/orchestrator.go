@@ -24,7 +24,7 @@ import (
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
 	"github.com/tagwright/ballast/internal/secret"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // notifyTimeout bounds how long the final Notify/Report call is allowed to

@@ -10,7 +10,7 @@ import (
 
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // runBackupSteps runs the stop/backup/start portion of the lifecycle

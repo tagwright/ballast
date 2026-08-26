@@ -13,7 +13,7 @@ import (
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/orchestrator"
 	"github.com/tagwright/ballast/internal/schedule"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // discoverAll lists every container the runtime knows about and registers a

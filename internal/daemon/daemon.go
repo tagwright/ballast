@@ -20,7 +20,7 @@ import (
 	"github.com/tagwright/ballast/internal/orchestrator"
 	"github.com/tagwright/ballast/internal/schedule"
 	"github.com/tagwright/ballast/internal/secret"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // defaultDockerSocket is used when cfg.Runtime is "docker" and neither

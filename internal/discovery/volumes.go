@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/tagwright/ballast/internal/config"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // localtimeClassPaths are the noise binds auto-discovery filters out even

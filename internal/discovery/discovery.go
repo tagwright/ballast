@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/tagwright/ballast/internal/config"
-	"github.com/tagwright/ballast/pkg/runtime"
+	"github.com/tagwright/core/runtime"
 )
 
 // Discover reads c's labels against cfg and returns the service's
