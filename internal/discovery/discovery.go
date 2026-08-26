@@ -101,7 +101,7 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	}
 
 	if err := validate(spec, cfg); err != nil {
-		return nil, warnings, err
+		return spec, warnings, err
 	}
 
 	return spec, warnings, nil
