@@ -4,8 +4,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/tagwright/ballast/internal/cli"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -13,11 +14,7 @@ import (
 var version = "00.01.00b1"
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Printf("ballast %s\n", version)
-		return
+	if err := cli.Execute(version); err != nil {
+		os.Exit(1)
 	}
-	// The daemon loop and the restore CLI land next, on the Cobra command tree.
-	fmt.Fprintln(os.Stderr, "ballast: not yet implemented")
-	os.Exit(1)
 }
