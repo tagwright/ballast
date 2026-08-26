@@ -1,0 +1,6 @@
+.git
+/ballast
+/dist
+*.test
+*.out
+*.prof

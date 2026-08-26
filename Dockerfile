@@ -1,17 +1,20 @@
-# Build from the parent directory so the sibling beacon module (local
-# replace) is present:
+# Build from the ballast repository root:
 #
-#   docker build -f ballast/Dockerfile -t ghcr.io/tagwright/ballast:dev /mnt/md0/docker
+#   docker build -t ghcr.io/tagwright/ballast:dev .
 #
-# Once beacon is published and required as a tagged version (replace
-# removed), this can build from the ballast directory alone.
+# beacon is consumed as a published module (github.com/tagwright/beacon).
+# GOPRIVATE makes the build fetch tagwright's own modules directly from their
+# source rather than through the public module proxy; go.sum still verifies
+# their integrity.
 
 FROM golang:1.25 AS build
 
+ENV GOPRIVATE=github.com/tagwright/*
+
 WORKDIR /src
-COPY beacon/ ./beacon/
-COPY ballast/ ./ballast/
-WORKDIR /src/ballast
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
 
 RUN CGO_ENABLED=0 go build -buildvcs=false -ldflags "-s -w -X main.version=$(cat VERSION)" -o /out/ballast ./cmd/ballast
 
