@@ -181,7 +181,17 @@ func mapMountPoint(m container.MountPoint) Mount {
 // mapEventAction translates a Docker Engine API event action into Ballast's
 // normalized EventType. Actions Ballast does not act on (health checks,
 // exec, resize, and the like) are reported as not-ok so the caller can skip
-// them. Podman's compat event stream reuses the same action vocabulary.
+// them.
+//
+// Podman's compat event stream reuses most of the same action vocabulary,
+// but not all of it: where a real Docker daemon emits "destroy" for a
+// container's removal, Podman's compat API (confirmed against a live
+// Podman 5.8 socket, not merely its documentation) emits "remove" instead,
+// and never emits "destroy" for a container at all. Both are mapped to
+// EventDestroy here so daemon/watch.go's die-or-destroy unregistration
+// fires correctly on both runtimes; a real Docker daemon has never been
+// observed to emit ActionRemove for a container (only for other resource
+// types), so widening the match costs Docker nothing.
 func mapEventAction(action events.Action) (EventType, bool) {
 	switch action {
 	case events.ActionStart:
@@ -190,7 +200,7 @@ func mapEventAction(action events.Action) (EventType, bool) {
 		return EventStop, true
 	case events.ActionDie:
 		return EventDie, true
-	case events.ActionDestroy:
+	case events.ActionDestroy, events.ActionRemove:
 		return EventDestroy, true
 	default:
 		return "", false

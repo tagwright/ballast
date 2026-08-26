@@ -3,7 +3,7 @@
 Real end-to-end tests of Ballast against a live Docker socket: build the
 image, stand up throwaway labeled containers with known data, drive Ballast
 through real backups, snapshot listings, and restores, diff the restored
-data against the original, and tear everything down. Seventeen scripts,
+data against the original, and tear everything down. Eighteen scripts,
 each proving a different path:
 
 - **`run.sh`** — filesystem backup/restore against a local repo: a single
@@ -99,6 +99,21 @@ each proving a different path:
   `engine.Restic.Forget` with a `keep-daily` policy — the one thing no
   elapsed-time itest can practically prove.
 
+- **`run-podman.sh`** — the Podman adapter (`pkg/runtime/podman.go`) against
+  a real Podman, not just a compile check: it stands up its own throwaway,
+  self-contained Podman (a privileged `quay.io/podman/stable` container
+  running Podman's Docker-compatible compat API service) with no dependency
+  on a Podman install on the host running this harness, then drives
+  `ballast` against it with `BALLAST_RUNTIME=podman`. Proves filesystem
+  backup/restore byte-diffed against a real Podman socket; the
+  `io.podman.compose.*` compose-identity fallback (the test container is
+  labeled with no `com.docker.compose.*` pair at all, so a `project=...`
+  snapshot tag proves the fallback path, not just the Docker-compat-label
+  preference branch); the daemon's live watch loop discovering a container
+  via a real Podman "start" event and firing a scheduled backup for it; and
+  a regression check for a real bug this pass found running against a live
+  socket for the first time (see docs/TESTING.md's "Bugs found and fixed").
+
 See [docs/TESTING.md](../../docs/TESTING.md) for the full test methodology
 and an honest coverage matrix across all of Ballast, not just this harness.
 
@@ -108,6 +123,13 @@ Every Docker object any of these scripts creates is named with the prefix
 `ballast-itest-` (containers, volumes, networks) or tagged `ballast:itest`
 (image). None of them ever starts, stops, execs into, or removes anything
 else. Run them with `bash test/integration/<script>.sh`.
+
+`run-podman.sh` is the one exception to "Docker object": it also creates
+Podman objects, all inside its own throwaway, self-contained nested Podman
+(a privileged `quay.io/podman/stable` Docker container it stands up
+itself), every one of them also named with the `ballast-itest-` prefix. It
+never touches a Podman install on the host running this harness (there
+need not be one).
 
 Each script cleans up everything it created on exit, including on failure
 or interrupt (`--keep` skips this, for debugging). Each leaves the host as
@@ -137,6 +159,7 @@ bash test/integration/run-password-secret.sh # ballast.password-secret override,
 bash test/integration/run-repo-path.sh     # ballast.repo.path override lands at the overridden sub-path
 bash test/integration/run-sftp.sh          # SFTP backend, real atmoz/sftp server
 bash test/integration/run-retention-time.sh # keep-daily time-based retention, at the engine level
+bash test/integration/run-podman.sh        # Podman adapter against a real (self-contained, nested) Podman
 bash test/integration/<script>.sh --keep   # leave ballast-itest-* objects and generated files for inspection
 ```
 
@@ -146,6 +169,9 @@ All of them need a Docker socket at the default location and expect
 entry to the relevant `*.itest.yml` mapping the real volumes path to
 itself before running (`run-stream.sh`, `run-notify.sh`, and `run-sftp.sh`
 back up no filesystem paths at all, so this only matters for the rest).
+`run-podman.sh` additionally needs a Docker daemon capable of running a
+`--privileged` container (Podman's own nested container runtime needs it);
+it needs nothing else Podman-specific on the host.
 
 `run-retention-time.sh` doesn't take `--keep`: it creates one throwaway
 container (`ballast-itest-retention-time-runner`) that only ever holds a Go
@@ -160,7 +186,7 @@ already prints in full.
   `notify.itest.yml`, `watch.itest.yml`, `splay.itest.yml`,
   `volumes.itest.yml`, `dupe.itest.yml`, `alias.itest.yml`,
   `conflict.itest.yml`, `password-secret.itest.yml`, `repo-path.itest.yml`,
-  `sftp.itest.yml` — committed. Minimal configs for each script: one
+  `sftp.itest.yml`, `podman.itest.yml` — committed. Minimal configs for each script: one
   destination each (`local` for all but `run-s3.sh`, which points
   `s3test` at the MinIO container, and `run-sftp.sh`, which points `sftp`
   at the atmoz/sftp container). None configure `notifications` except
@@ -178,19 +204,28 @@ already prints in full.
   same pattern: its script sets `BALLAST_ENABLE_EXEC=true` on the daemon
   container only, not in the file). `run-retention-time.sh` has no
   `*.itest.yml` at all: it never runs the `ballast` binary, only a Go test
-  against `engine.Restic` directly.
+  against `engine.Restic` directly. `podman.itest.yml` is the one config
+  that isn't Docker-only: it sets a `host_roots` entry mapping Podman's own
+  named-volume data root (`/var/lib/containers/storage/volumes`) to itself,
+  since `config.applyDefaults` only ever seeds the Docker one
+  (`/var/lib/docker/volumes`) by default; `run-podman.sh` sets
+  `BALLAST_RUNTIME=podman` and `BALLAST_SOCKET` on the ballast run
+  containers itself, the same env-not-file pattern the exec/stop gates
+  above use, since the socket path depends on the throwaway nested-Podman
+  container's shared volume the script sets up.
 - `run.sh`, `run-stream.sh`, `run-s3.sh`, `run-retention.sh`,
   `run-hooks.sh`, `run-stop.sh`, `run-notify.sh`, `run-watch.sh`,
   `run-splay.sh`, `run-volumes.sh`, `run-dupe.sh`, `run-alias.sh`,
   `run-conflict.sh`, `run-password-secret.sh`, `run-repo-path.sh`,
-  `run-sftp.sh`, `run-retention-time.sh` — committed. Each automates its
+  `run-sftp.sh`, `run-retention-time.sh`, `run-podman.sh` — committed. Each automates its
   own build, service/backend setup, backup, snapshots, restore or
   retention/prune/check, and cleanup.
 - `secrets/repo-master-key` — generated, gitignored, shared by every
-  script except `run-s3.sh` and `run-password-secret.sh` (each of which
-  needs a secret alongside it beyond the master key, so each uses its own
-  `secrets-*/` directory instead). A fresh `openssl rand -base64 32` master
-  key, generated once and reused across runs.
+  script except `run-s3.sh`, `run-password-secret.sh`, and `run-podman.sh`
+  (each of which needs its own `secrets-*/` directory instead, either for
+  an extra secret beyond the master key or, for `run-podman.sh`, simple
+  isolation from the Docker-adapter suites). A fresh `openssl rand -base64
+  32` master key, generated once and reused across runs.
 - `secrets-s3/` — generated, gitignored. `run-s3.sh`'s own master key plus
   `r2-access-key-id`/`r2-secret-access-key` (the MinIO root credentials,
   named after the real R2 secret names so the destination config exercises
@@ -210,7 +245,8 @@ already prints in full.
   `markers-splay/`, `repos-volumes/`, `restore-volumes/`, `repos-dupe/`,
   `repos-alias/`, `restore-alias/`, `repos-conflict/`,
   `repos-password-secret/`, `restore-password-secret/`, `repos-repo-path/`,
-  `restore-repo-path/`, `restore-sftp/` — generated, gitignored. The restic
+  `restore-repo-path/`, `restore-sftp/`, `repos-podman/`, `restore-podman/`
+  — generated, gitignored. The restic
   repositories and restore targets for each script's run (`run-s3.sh`
   writes to MinIO and `run-sftp.sh` writes to the SFTP server, neither a
   local repo path, so neither has a `repos-*/`; `run-retention.sh`,

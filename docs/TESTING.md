@@ -23,7 +23,7 @@ Three layers, in increasing order of how much they actually prove:
    repository, and diff real bytes. Every object these scripts create is
    named `ballast-itest-*` (or tagged `ballast:itest`), never touches
    anything else on the host, and is torn down in a trap on exit (success,
-   failure, or interrupt). Seventeen scripts today:
+   failure, or interrupt). Eighteen scripts today:
 
    - `run.sh` — filesystem backup/restore against a local repo, plus a
      daemon scheduler smoke test (`@every 1m`, confirmed to fire a second
@@ -141,6 +141,24 @@ Three layers, in increasing order of how much they actually prove:
      `engine.Restic.Forget` code path with `RetentionPolicy{Daily: 3}`. See
      the "Retention / forget, time-based" row below for exactly what this
      proves and does not.
+   - `run-podman.sh` — the Podman adapter (`pkg/runtime/podman.go`) against
+     a real Podman socket, not just a compile check, the first itest to do
+     so. Stands up its own throwaway, self-contained nested Podman (a
+     privileged `quay.io/podman/stable` container running Podman's
+     Docker-compatible compat API service on a socket shared with the
+     `ballast:itest` container via a Docker-managed named volume, not a
+     host bind-mount path, since this harness can itself run inside a
+     container whose filesystem is not the Docker host's) — no dependency
+     on a Podman install on the host running it. Proves filesystem
+     backup/restore byte-diffed against the real socket; the
+     `io.podman.compose.*` compose-identity fallback (the test container
+     carries no `com.docker.compose.*` pair at all, so a `project=...`
+     snapshot tag proves the fallback branch specifically, not just the
+     Docker-compat-label preference branch); the daemon's live watch loop
+     discovering a container via a real Podman "start" event and firing a
+     scheduled backup for it; and a regression check for a real bug found
+     running against the live socket for the first time — see "Bugs found
+     and fixed" below.
 
    See `test/integration/README.md` for how to run each one.
 
@@ -256,7 +274,7 @@ Categories, precisely:
 | Gatus telemetry sink | **Not yet tested** | Same boundary as the other notification backends: lives in beacon, needs a real Gatus push-URL target. No itest configures `telemetry`. |
 | Exec pre/post hooks (`ballast.exec.pre`/`.post`) | **Integration-proven (pre-hook path) + partially unproven (post-hook failure path)** | `run-hooks.sh`: a service with both `exec.pre` and `exec.post` labels, each writing a distinct marker file into the volume being backed up. `docker exec` after the run confirms both hooks actually executed inside the container; restoring the resulting snapshot proves the ordering directly (the pre-marker is present in the snapshot, the post-marker is not, because `RunBackup`'s filesystem-backup step runs strictly between the two hooks), which is a stronger proof than a timestamp comparison would be. A second service with a non-zero `exec.pre` confirms the run aborts with **no snapshot written**, and that `exec.post` still runs regardless (`docker exec` confirms its own marker). **Not proven**: `orchestrator.RunBackup`'s doc-commented claim that a non-zero `exec.post` "only warns" rather than aborting or failing the command — no itest gives `exec.post` a failing command, only a succeeding one. `exec.pre`/`exec.post`'s `.timeout`/`.user` sub-labels are also unexercised. |
 | Stop-for-consistency (`ballast.stop`, `BALLAST_ENABLE_STOP`) | **Integration-proven** | `run-stop.sh`: a `ballast.stop=true` labeled service. `docker events` watched across a real `ballast backup` confirms the container actually received a `die` event (stopped) followed by a `start` event (restarted), in that order; `docker inspect`'s `State.StartedAt` confirms a genuinely fresh start, not merely "still running"; and the snapshot the backup wrote restores byte-for-byte. Also confirms discovery's grammar rejects `stop=true` combined with a stream backup as incompatible (found a real bug doing this — see "Bugs found and fixed" below). **Not proven**: a direct concurrent-write race (i.e. that data really can't change mid-backup while stopped) — the test container has no writer process to race against, so this is still resting on `runBackupSteps`' code structure (fs backup runs strictly inside the stop/defer-start closure) rather than an empirical race demonstration. Also unproven: the `defaultStopTimeoutSeconds` (30s) SIGKILL-after-timeout fallback path itself — the test container responds to `SIGTERM` immediately (`--init` + `exec sleep`), so only the graceful-stop path has actually run. |
-| Podman adapter | **Compile-only** | `pkg/runtime/podman.go` shares all of `engineClient`'s request/mapping code with the Docker adapter (which IS integration-proven), but the Podman-specific bits — default rootless/rootful socket resolution, the `io.podman.compose.*` label fallback — have never run against an actual Podman socket. |
+| Podman adapter | **Integration-proven (compat API core paths) + partially unproven (see below)** | `run-podman.sh`: a real Podman 5.8 compat API socket (a self-contained nested Podman this itest stands up itself), driving `List`/`Inspect`/`Exec`/`Stop`/`Start`/`Watch` for real through `PodmanRuntime`'s shared `engineClient`. Proven: filesystem backup/restore byte-diffed against the real socket; the `io.podman.compose.*` compose-identity fallback (`podmanComposeIdentity`), specifically its no-`com.docker.compose.*`-present branch, via a real snapshot tag; the daemon's live `Watch` loop discovering a container via a real "start" event and firing a scheduled backup; and `Watch`'s "die or destroy" unregistration path, including the real bug this pass found and fixed (see "Bugs found and fixed" below). **Still not proven**: `Exec` against Podman (no itest here backs up a service via the exec/stream path, e.g. a DB dump, against Podman — only the filesystem-backup path, which never calls `Exec`); `Stop`/`Start` against Podman (no itest sets `ballast.stop=true` against a Podman-backed service, the way `run-stop.sh` does for Docker); the rootless per-user socket default (`defaultPodmanSocket`'s `XDG_RUNTIME_DIR`/`/run/user/<uid>` branches) and the rootful-default branch — this itest always passes an explicit `BALLAST_SOCKET`, so `NewPodman`'s own default-resolution logic has never executed under test, only been read; and `CONTAINER_HOST` env-var socket resolution (`internal/daemon`/`internal/cli`'s `podmanSocket`), which `run-podman.sh` also bypasses via the same explicit `BALLAST_SOCKET`. Also structurally unprovable by any itest here, and worth stating plainly: `engineClient.clientFor` hardcodes `"unix://"+socket` for both adapters, so a Podman deployment whose API is only reachable over TCP (no local socket at all) cannot be pointed at with `BALLAST_SOCKET` today — this is a real adapter limitation, not merely an untested path. |
 | Failure paths generally | **Partial** | The stream-dump failure path, the `exec.pre` failure path, the `stop`+stream discovery-rejection path, the `ballast.*`/`tagwright.backup.*` prefix-conflict rejection (`run-conflict.sh`), and the duplicate-service-name rejection (`run-dupe.sh`) are all integration-proven (see above). `exec`/`stop` used without their global gate is enforced by code every non-exec/non-stop itest run implicitly relies on not tripping, but no test deliberately triggers and asserts it. Secret-not-found, wrong repository password, and unreachable-backend failures are untested. |
 
 ## Bugs found and fixed
@@ -432,6 +450,41 @@ since both are one-shot read-only diagnostics that don't need real lock
 coordination at all, rather than dropping `:ro` the way `run-retention.sh`
 did for its `check --read-data`, which does need to be able to write).
 
+**Ninth bug, found and fixed running the Podman adapter against a real
+socket for the first time**: `pkg/runtime/engine.go`'s `mapEventAction`
+(the shared code both `DockerRuntime` and `PodmanRuntime` use to normalize
+the runtime's raw lifecycle-event action into Ballast's `EventType`) only
+recognized `events.ActionDestroy` ("destroy") as a container-removal event.
+Confirmed directly against a live Podman 5.8 socket, not merely inferred
+from documentation (`curl --unix-socket <sock> http://localhost/v1.41/events`
+while removing a container): Podman's compat API emits `"Action":"remove"`
+for container removal, never `"destroy"` — a real, undocumented divergence
+from Docker's own event vocabulary, not a Podman bug (Podman's own native
+`podman events` output shows the identical "remove" verb, so this is
+Podman's real behavior, not a compat-layer quirk). Docker itself always
+fires `"die"` before `"destroy"` when a running container is force-removed,
+and `internal/daemon/watch.go`'s `handleEvent` already unregisters a
+service on `EventDie` alone, so the common "remove a running,
+daemon-registered container" case happened to still work by accident on
+Podman even before this fix. The real gap: a container already stopped
+*before* the daemon starts watching (discovered via the initial
+`List(All:true)` pass in `discoverAll`, not a live "start" event, since
+`discoverOne` never filters by `Container.State`) and then removed fires
+only `"remove"`, with no `"die"` to fall back on — its scheduled job leaked
+forever, silently, with the daemon's own logs showing nothing at all.
+Reproduced deliberately before fixing (a pre-fix build, built by stashing
+the fix, produced zero unregistration log output for this exact sequence)
+and confirmed fixed after (the identical sequence against the fixed build
+produced `"daemon: service unregistered" ... event=destroy` as expected).
+Fixed by mapping both `events.ActionDestroy` and `events.ActionRemove` to
+`EventDestroy`; a real Docker daemon has never been observed to emit
+`ActionRemove` for a container (only for other resource types, per
+`moby/moby`'s own event vocabulary), so widening the match costs the
+integration-proven Docker path nothing. `pkg/runtime/engine_test.go`'s
+`TestMapEventActionDestroyAndRemoveBothMapToEventDestroy` pins this at the
+unit level; `run-podman.sh`'s final step reproduces the live scenario end
+to end against a real socket.
+
 ## What's still unproven, bluntly
 
 - **Real R2.** MinIO proves the code path; it does not prove R2 itself. Run
@@ -466,8 +519,19 @@ did for its `check --read-data`, which does need to be able to write).
   test container also responds to `SIGTERM` immediately, so the
   `defaultStopTimeoutSeconds` (30s) SIGKILL fallback path has never
   actually fired under test.
-- **Podman.** Entirely untested beyond compiling; only the Docker adapter
-  has ever talked to a real socket under test.
+- **Podman, partially.** No longer entirely untested beyond compiling:
+  `run-podman.sh` now proves filesystem backup/restore, the
+  `io.podman.compose.*` compose-identity fallback, and the daemon's watch
+  loop (`start` discovery and the `die`/`remove`-as-destroy unregistration
+  path, including the real `mapEventAction` bug this pass found and fixed
+  — see "Bugs found and fixed") against a real Podman 5.8 socket. Still
+  genuinely unproven: `Exec`/`Stop`/`Start` against Podman (no itest here
+  exercises a stream/DB-dump backup or `ballast.stop` against a
+  Podman-backed service, only Docker); `NewPodman`'s own rootless/rootful
+  default-socket resolution and `CONTAINER_HOST` env parsing (every itest
+  run passes an explicit `BALLAST_SOCKET`); and, structurally, any Podman
+  deployment reachable only over TCP rather than a local socket, since
+  `engineClient.clientFor` hardcodes a `unix://` scheme for both adapters.
 - **Exec/stop used without their global gate, and secret/backend
   failures.** `run-stop.sh`'s `stop`+stream incompatibility and
   `run-conflict.sh`'s prefix conflict are now both deliberately triggered

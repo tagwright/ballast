@@ -49,3 +49,6 @@
 /test/integration/restore-repo-path/
 /test/integration/ssh-sftp/
 /test/integration/secrets-retention-time/
+/test/integration/repos-podman/
+/test/integration/restore-podman/
+/test/integration/secrets-podman/
