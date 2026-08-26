@@ -95,7 +95,9 @@ func handleEvent(ctx context.Context, ev runtime.Event, rt runtime.Runtime, cfg 
 		discoverOne(c, cfg, reg, sched, deps, log, notifier)
 
 	case runtime.EventDie, runtime.EventDestroy:
-		reg.unregisterContainer(sched, ev.ID)
+		if service := reg.unregisterContainer(sched, ev.ID); service != "" {
+			log.Info("daemon: service unregistered", "service", service, "container", ev.ID, "event", string(ev.Type))
+		}
 
 	default:
 		// EventStop and anything else the runtime might one day report are

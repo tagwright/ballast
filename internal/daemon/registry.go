@@ -87,7 +87,15 @@ func (r *registry) register(sched *schedule.Scheduler, deps orchestrator.Deps, s
 // and cancels its scheduled job. Used on a die/destroy lifecycle event: the
 // container can no longer be backed up until it starts again, at which
 // point a fresh start event re-discovers and re-registers it.
-func (r *registry) unregisterContainer(sched *schedule.Scheduler, containerID string) {
+//
+// It returns the service name that was actually unregistered, or "" if
+// containerID owned nothing (already removed, or never registered in the
+// first place, e.g. a die event for a container that was never opted in).
+// The caller logs on a non-empty result: a service dropping out of the
+// schedule is exactly the kind of state change an operator watching the
+// daemon's logs needs to see, matching register's own logging on the way
+// in.
+func (r *registry) unregisterContainer(sched *schedule.Scheduler, containerID string) string {
 	r.mu.Lock()
 	service, ok := r.byContainer[containerID]
 	if ok {
@@ -100,9 +108,11 @@ func (r *registry) unregisterContainer(sched *schedule.Scheduler, containerID st
 	}
 	r.mu.Unlock()
 
-	if ok {
-		sched.Remove(service)
+	if !ok {
+		return ""
 	}
+	sched.Remove(service)
+	return service
 }
 
 // notify sends a Notification through notifier, tolerating a nil notifier
