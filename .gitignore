@@ -41,3 +41,11 @@
 /test/integration/secrets/
 /test/integration/secrets-s3/
 /test/integration/retention-pw.tmp
+/test/integration/repos-password-secret/
+/test/integration/restore-password-secret/
+/test/integration/secrets-password-secret/
+/test/integration/password-secret-pw.tmp
+/test/integration/repos-repo-path/
+/test/integration/restore-repo-path/
+/test/integration/ssh-sftp/
+/test/integration/secrets-retention-time/
