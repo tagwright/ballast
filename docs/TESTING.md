@@ -23,7 +23,7 @@ Three layers, in increasing order of how much they actually prove:
    repository, and diff real bytes. Every object these scripts create is
    named `ballast-itest-*` (or tagged `ballast:itest`), never touches
    anything else on the host, and is torn down in a trap on exit (success,
-   failure, or interrupt). Thirteen scripts today:
+   failure, or interrupt). Seventeen scripts today:
 
    - `run.sh` — filesystem backup/restore against a local repo, plus a
      daemon scheduler smoke test (`@every 1m`, confirmed to fire a second
@@ -114,6 +114,33 @@ Three layers, in increasing order of how much they actually prove:
      crash) and by `ballast backup <service>`, which (after this pass's fix,
      see "Bugs found and fixed" below) surfaces the real conflict instead of
      a misleading "not found".
+   - `run-password-secret.sh` — `ballast.password-secret=<name>`: a real
+     backup + restore round-trip through the named secret, plus the actual
+     proof (not just the round-trip, which would also pass if the override
+     silently did nothing): shelling out directly to the same restic binary
+     Ballast bundles, the master-key-derived password (`ballast key`) is
+     confirmed to **not** open the repository, while the named secret's own
+     value does.
+   - `run-repo-path.sh` — `ballast.repo.path=<subpath>`: a real backup
+     lands at the overridden sub-path on the host-visible repos directory
+     (a real restic `config` object found there), and explicitly does
+     **not** exist at the default, un-overridden service-name path;
+     restore then round-trips through the same override.
+   - `run-sftp.sh` — the restic SFTP backend against a throwaway
+     `atmoz/sftp` server on a `ballast-itest-net` user network: a real
+     `sftp:user@host:path` destination, key-based auth via a fresh
+     itest-only keypair, a real backup confirmed to have landed on the
+     SFTP server's own filesystem (independent of Ballast's view), and a
+     restore that byte-matches the canary. Found a real production gap
+     doing this — see "Bugs found and fixed" below.
+   - `run-retention-time.sh` — not a container itest like the sixteen
+     above: it runs `internal/engine`'s `TestForgetKeepDailyTimeBased`
+     (build-tag `integration`) inside a throwaway `golang:1.25` + `restic`
+     container, seeding a repository with snapshots at controlled synthetic
+     times via `restic backup --time` and exercising the real
+     `engine.Restic.Forget` code path with `RetentionPolicy{Daily: 3}`. See
+     the "Retention / forget, time-based" row below for exactly what this
+     proves and does not.
 
    See `test/integration/README.md` for how to run each one.
 
@@ -123,6 +150,68 @@ Three layers, in increasing order of how much they actually prove:
    notification backend's live endpoint that isn't self-hostable the way
    ntfy is (an actual Discord webhook, SMTP relay, or Gatus instance),
    neither of which belongs in a repo-local test run.
+
+## Inert-field audit
+
+A "documented but inert" bug (config.Config.Exclude never merged into a
+service's excludes; config.Config.Splay never read by the scheduler --
+both found and the latter fixed this pass, see below) is worse than a
+missing feature: it looks configured, ships in a `ballast.yml`, and does
+nothing, with no error to notice. This pass traced EVERY field on
+`config.Config` and EVERY label suffix `internal/discovery` accepts to the
+line of code that actually consults it, not just the line that parses it.
+
+**Every `config.Config` field:**
+
+| Field | Status | Consulted at |
+|---|---|---|
+| `Destinations` | WIRED | `orchestrator.BuildRepo` |
+| `DefaultDestination` | WIRED | `discovery.Discover` |
+| `Schedule` | WIRED | `daemon/registry.go`'s `register` (per-service fallback) |
+| `Window` | WIRED | `daemon.schedulerConfig` -> `schedule.Scheduler`'s splay window |
+| `Splay` | **was INERT, fixed this pass** | `daemon.schedulerConfig` -> `schedule.Scheduler.splay` -> `schedule.Parse` |
+| `Retention` | WIRED | `orchestrator/retention.go`'s `defaultRetentionPolicy` (global fallback) |
+| `Exclude` | WIRED (fixed a prior pass) | `discovery.Discover`'s `mergeExcludes` |
+| `DiscoverExclude` | WIRED | `discovery/volumes.go`'s `isEligibleMount` |
+| `HostRoots` | WIRED | `discovery/volumes.go`'s `translateHostPath` |
+| `SecretsDir` | WIRED | `secret.FileEnvResolver`, built in both `daemon.Run` and the CLI's `buildCommonDeps`/`key` command |
+| `EnableExec` | WIRED | `discovery.validate` (gates `stream.*`/`exec.*`) |
+| `EnableStop` | WIRED | `discovery.validate` (gates `stop`) |
+| `PruneSchedule` | WIRED | `daemon/maintenance.go`'s `scheduleMaintenance` |
+| `CheckSchedule` | WIRED | `daemon/maintenance.go`'s `scheduleMaintenance` |
+| `Concurrency` | WIRED | `daemon.schedulerConfig` -> `schedule.Scheduler`'s worker pool |
+| `Notifications` | WIRED | `daemon.BuildNotifier` |
+| `Telemetry` | WIRED | `daemon.BuildNotifier` |
+| `Runtime` | WIRED | `daemon.buildRuntime` / the CLI's own `buildRuntime` |
+| `Socket` | WIRED | `daemon.dockerSocket`/`podmanSocket` / the CLI's own copies |
+
+Every field is now WIRED. `Splay` was the only remaining inert one this
+pass found; its intended wiring was mechanical (feed it into
+`schedule.Parse` as the switch that already exists between "splay this
+alias" and "parse it literally"), so it was fixed rather than left open --
+see "Splay, fixed" under "Bugs found and fixed" below.
+
+**Every label suffix `internal/discovery` accepts** (`enable`, `name`,
+`repo`, `repo.path`, `password-secret`, `volumes`, `volumes.exclude`,
+`exclude`, `exclude.<n>`, `exclude-caches`, `stream.<id>.*`, `exec.*`,
+`stop`, `schedule`, `retention.*`, `tags`, `notify.*`) traces through to a
+field on `discovery.BackupSpec` that `internal/orchestrator` (or
+`internal/daemon/registry.go`, for `schedule`) actually consults, with no
+exceptions found: **every label is WIRED.** This is not a surprise this
+pass discovered fresh -- it is the state prior passes already got to by
+fixing the third, fourth, and fifth bugs below (the two nil-spec bugs and
+the global-exclude-merge bug), all of which were exactly this class of
+problem at the label-parsing layer. This pass's job was confirming that
+state still holds after the fact, field by field, not finding new label
+bugs -- and it does hold: no label-level regressions, and no new inert
+label found.
+
+No field or label was left inert pending a design decision this pass: the
+one inert field found (`Splay`) had an obvious, mechanical fix and was
+fixed. If a future pass finds one that genuinely needs a design call
+(ambiguous default, unclear interaction with another field), it belongs
+here, called out explicitly, the same way `Splay` was called out and left
+alone in the PRIOR pass before this one resolved it.
 
 ## Coverage matrix
 
@@ -147,15 +236,20 @@ Categories, precisely:
 | Daemon socket-event watch (add on container start, drop on die/destroy) | **Integration-proven** | `run-watch.sh`: a real Docker "start" event for a container the daemon has never seen drives discovery and a real backup; `docker rm -f`'s die+destroy pair drops the scheduled job, confirmed by the `daemon: service unregistered` log line (added this pass, see "Bugs found and fixed"), and a full schedule interval afterward produces no further backup. Every prior itest only proved startup discovery (`discoverAll`), never the watch loop. |
 | Multiple services, same schedule alias: `Concurrency=1` serialization | **Integration-proven** | `run-splay.sh`: three services with an artificial `exec.pre` delay, asserting from real whole-second start/end markers that no two services' backup runs ever overlap. |
 | Splay-slot distinctness across a fleet (same period alias, different names) | **Unit-tested** | `internal/schedule/schedule_test.go`'s `TestDailySplayDistinctAcrossThreeServices` (three real service names, pairwise-distinct `@daily` slots), extending the existing pairwise `@hourly` test to a small fleet. A real `@daily` wait is impractical for a live itest. |
+| `Splay`'s on/off toggle (`BALLAST_SPLAY`) | **Unit-tested** | Was inert (parsed, never read) before this pass -- see "Splay, fixed" under "Bugs found and fixed" below. Now: `internal/config/config_test.go` proves `Load` defaults `Splay` to true (a nil `*bool`, not the bool zero value) and honors an explicit `BALLAST_SPLAY=false`/`splay: false`; `internal/schedule/scheduler_test.go`'s `TestNewDefaultsSplayOnWhenNil`/`TestNewHonorsExplicitSplayFalse` prove `Scheduler` actually reads it; `internal/schedule/schedule_test.go`'s `TestSplayFalse*` prove `Parse(..., splay=false)` lands `@daily`/`@hourly` on the canonical, unsplayed boundary instead of a job-name-derived slot. No live itest: the distinction only matters for a real `@daily`/`@hourly` wait, which the existing splay-slot-distinctness gap above already rules out as impractical here. |
 | `host_roots` default volume resolution | **Unit-tested + Integration-proven** | Unit: `internal/discovery/volumes_test.go` (default Docker volumes root, and a user `host_roots` entry merging with it rather than replacing it). Integration: every fs-backup itest run (`run.sh`, `run-s3.sh`) resolves a named volume with zero `host_roots` configuration, exactly the "add one label" README claim. |
 | HKDF password derivation (`internal/secret/derive.go`) | **Unit-tested (golden value) + Integration-proven (indirectly)** | Unit: `internal/secret/derive_test.go`'s `TestDeriveRepoPasswordGoldenValues` pins `DeriveRepoPassword`'s output for a fixed master and three service names against exact base64 strings computed once with this code and hardcoded as constants — this is the tripwire the doc comment's "frozen v1 contract" warning asked for: a regression in the salt, info template, output length, or encoding fails this test immediately instead of silently orphaning every repository. `TestDeriveRepoPasswordDeterministic` and `TestDeriveRepoPasswordDistinctPerService` cover the two properties `ballast key <service>` depends on (same input always reproduces the same password; different service names never collide). `TestLoadMasterRejectsShortMaster` / `TestLoadMasterAcceptsMinimumLength` pin the `minMasterKeyBytes` (32) boundary on both sides. Integration: every itest backup+restore round trip only works if the same derivation reproduces the same password at write and read time, which has succeeded across all four itest suites. |
-| Label discovery / parsing (`internal/discovery`) | **Unit-tested + Integration-proven** | Unit: default host-roots merge, `ballast.notify.*` labels including the `tagwright.backup.*` alias, the prefix-conflict error carrying a usable spec (`TestDiscoverPrefixConflictReturnsSpecAlongsideError`), and the global `exclude` list merging with a service's own (`TestDiscoverGlobalExcludeMergesWithLabel`). Integration: `ballast.enable`, `ballast.repo`, `ballast.volumes=none`, and `ballast.stream.<id>.*` end to end (`run-stream.sh`); named-volume mount discovery (`run.sh`, `run-s3.sh`); `ballast.volumes`/`ballast.volumes.exclude` narrowing, `ballast.exclude`, and `ballast.exclude-caches` (`run-volumes.sh`); `ballast.name` service-identity override and the duplicate-service-name rejection rule (`run-dupe.sh`); the `tagwright.backup.*` alias end to end including `tags` and `retention.last` (`run-alias.sh`); and the `ballast.*`/`tagwright.backup.*` conflict-rejection rule via both the daemon and the CLI (`run-conflict.sh`). Still not covered by any test: individual `retention.hourly`/`.daily`/`.weekly`/`.monthly`/`.yearly`/`.within`/`.keep-tags` label parsing beyond `retention.last`, and the indexed `exclude.<n>` escape hatch (only the CSV `exclude` form has run). |
+| Label discovery / parsing (`internal/discovery`) | **Unit-tested + Integration-proven** | Unit: default host-roots merge, `ballast.notify.*` labels including the `tagwright.backup.*` alias, the prefix-conflict error carrying a usable spec (`TestDiscoverPrefixConflictReturnsSpecAlongsideError`), and the global `exclude` list merging with a service's own (`TestDiscoverGlobalExcludeMergesWithLabel`). Integration: `ballast.enable`, `ballast.repo`, `ballast.volumes=none`, and `ballast.stream.<id>.*` end to end (`run-stream.sh`); named-volume mount discovery (`run.sh`, `run-s3.sh`); `ballast.volumes`/`ballast.volumes.exclude` narrowing, `ballast.exclude`, and `ballast.exclude-caches` (`run-volumes.sh`); `ballast.name` service-identity override and the duplicate-service-name rejection rule (`run-dupe.sh`); the `tagwright.backup.*` alias end to end including `tags` and `retention.last` (`run-alias.sh`); the `ballast.*`/`tagwright.backup.*` conflict-rejection rule via both the daemon and the CLI (`run-conflict.sh`); `ballast.password-secret` (`run-password-secret.sh`); and `ballast.repo.path` (`run-repo-path.sh`). Still not covered by any test: individual `retention.hourly`/`.weekly`/`.monthly`/`.yearly`/`.within`/`.keep-tags` label parsing beyond `retention.last` (`retention.daily`'s *outcome* is proven, but not from a label -- see the retention rows above), and the indexed `exclude.<n>` escape hatch (only the CSV `exclude` form has run). |
 | Stream / DB-dump path (exec → `restic backup --stdin`) | **Integration-proven** | `run-stream.sh`: a real Postgres `pg_dump` piped through docker exec into restic, restored, and diffed against the original schema + canary row. Also proves the `BALLAST_ENABLE_EXEC` gate and `stream=<id>` snapshot tagging. |
 | Stream dump failure path | **Integration-proven** | `run-stream.sh`: a bogus `stream.<id>.command` (`false`) makes the backup abort with a non-zero exit and leaves **no snapshot** behind. This was not true before this test suite found it — see the "Bug found and fixed" section below. |
 | S3 backend + credential passing | **Integration-proven (via MinIO)** | `run-s3.sh`: a local MinIO stands in for the S3-compatible endpoint; the destination's `env` map resolves through the same secret → child-process-env → restic path a real S3-compatible destination uses, and the backup, snapshot listing, and restore all work against it, with objects confirmed present in the bucket. |
 | Real Cloudflare R2 | **Not yet tested — requires operator credentials** | R2 is just an S3-compatible endpoint from restic's point of view; MinIO exercises the identical code path (`internal/engine/restic.go`'s `childEnv`, the `s3:` URL scheme, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env). What MinIO cannot prove: R2-specific network/auth behavior (real TLS endpoint, real R2 account restrictions, R2's actual latency/throughput characteristics). Someone with real R2 credentials should run a manual backup/restore against a throwaway R2 bucket before depending on this in production. |
+| SFTP backend | **Integration-proven** | `run-sftp.sh`: a throwaway `atmoz/sftp` server, key-based auth via a fresh itest-only Ed25519 keypair, `strict host-key checking disabled` (a real deployment should pin the real server's host key instead -- this is a throwaway itest server whose host key is regenerated every run). Found and fixed a real production gap: the shipped image had no `ssh` binary, and restic's sftp backend execs one to open the connection -- an `sftp:` destination was accepted as config but every operation against it would have failed with "executable file not found in $PATH". See "SFTP backend needs an ssh client, fixed" below. |
+| `ballast.password-secret` override | **Integration-proven** | `run-password-secret.sh`: a real backup + restore round-trips through a service's named secret, and -- the part a mere round-trip can't prove, since it would also pass if the override silently did nothing -- direct `restic` invocations (same binary Ballast bundles) confirm the master-key-derived password (`ballast key`) does **not** open the repository while the named secret's own value does. |
+| `ballast.repo.path` override | **Integration-proven** | `run-repo-path.sh`: a real backup lands at the overridden sub-path on the host-visible repos directory (a real restic `config` object found there) and explicitly does **not** exist at the default, un-overridden service-name path; restore round-trips through the same override. |
 | Retention / forget, count-based (`keep-last`) | **Integration-proven, outcome asserted** | `run-retention.sh`: a service labeled `ballast.retention.last=3` is backed up five times (each real backup also runs `Forget` with that policy, exactly as production does — see `runBackupSteps`). The script records the snapshot ID each run produces and asserts the final surviving set is *exactly* the 3 newest (iterations 3, 4, 5), i.e. that `keep-last` forgets the right snapshots, not merely that `forget` exits 0. |
-| Retention / forget, time-based (`keep-daily`/`keep-weekly`/`keep-monthly`/`keep-yearly`/`keep-within`) | **Not asserted** | Deliberately not exercised: proving these deterministically needs snapshots with controlled, spread-out timestamps (real days/weeks apart, or a faked clock), which this harness does not attempt. `keep-last` was chosen instead specifically because it is assertable with real, back-to-back runs. The code path is identical (`internal/engine/restic.go`'s `Forget` builds one `restic forget` invocation from whichever `--keep-*` flags the policy sets), so this is a real, not merely theoretical, gap — restic's own retention math for the time-based keeps is untested by Ballast itself. |
+| Retention / forget, time-based, `keep-daily` specifically | **Integration-proven, at the engine level** | `run-retention-time.sh` runs `internal/engine/forget_time_itest_test.go`'s `TestForgetKeepDailyTimeBased` (build-tag `integration`) inside a throwaway container: `restic backup --time` seeds six snapshots across five distinct calendar days (two on one day, to prove the same-day-keeps-only-the-newest bucketing rule, not just a count), then the real `engine.Restic.Forget` — called through the `Engine` interface exactly as `internal/orchestrator/backup.go`'s `runBackupSteps` calls it — is applied with `RetentionPolicy{Daily: 3}`, and the exact surviving snapshot set is asserted by ID (the three most recent distinct days; the earlier of the two same-day snapshots is confirmed forgotten). This is at the engine level, not through Ballast's own CLI, because `BackupRequest` has no way to backdate a snapshot (nor should it) — see the file's own doc comment. |
+| Retention / forget, time-based, `keep-hourly`/`keep-weekly`/`keep-monthly`/`keep-yearly`/`keep-within` | **Not asserted** | `keep-daily` is now proven at the engine level (row above); the other five time-based dimensions share the identical `internal/engine/restic.go` `Forget` code path (one `restic forget` invocation built from whichever `--keep-*`/`--keep-within` flags the policy sets) and the identical `TestForgetKeepDailyTimeBased` harness could extend to them, but nothing does yet. This is a smaller, more theoretical gap than before this pass (the code path itself is now exercised, just not every dimension of it), but still a real one. |
 | Prune | **Integration-proven** | `run-retention.sh`: after the keep-last forget above has actually removed data, a real daemon with a short `BALLAST_PRUNE_SCHEDULE` runs prune (`internal/daemon/maintenance.go`'s scheduled path, the same one production uses) and the script confirms from the daemon's own logs that it completed with no error, then re-lists snapshots to confirm the repository is still valid (all 3 survivors still present) afterward. |
 | Check | **Integration-proven, including `--read-data`** | `run-retention.sh`: the daemon's `BALLAST_CHECK_SCHEDULE` path runs `Check(ctx, repo, false)` (matching `maintenance.go`, which hardcodes `readData=false` for the scheduled path) and the script confirms a clean completion from the daemon logs. Separately, since no CLI command or schedule ever passes `readData=true`, the script also shells out directly to the same `restic` binary bundled in `ballast:itest` and runs `restic check --read-data` against the same repository (using the password `ballast key` derives), confirming "no errors were found" against real pack data. |
 | Notification channels actually firing | **Integration-proven (ntfy, end to end through Ballast's own orchestrator) + not yet tested (discord/smtp/webhook)** | `run-notify.sh`: a real `binwiederhier/ntfy` server, a `notifications` channel pointed at it in `notify.itest.yml`, and three real `ballast backup` runs. This is the one itest that exercises the *whole* path other suites don't: `config.ChannelConfig` → `daemon.BuildNotifier` → `orchestrator.reportOutcome` → `beacon.Beacon.Notify` → a real HTTP POST → a message actually readable back from ntfy's own JSON poll API, with title, body, and priority all asserted. Also proves the per-service controls: `ballast.notify.suppress=true` produces no message at all, and `ballast.notify.on-success=true` raises a successful backup's message from ntfy priority 3 (default/`LevelInfo`) to 4 (high/`LevelWarning`). Every other itest still configures no `notifications` at all, so beacon's built-in `log` fallback fires there instead; `discord`, `smtp`, and `webhook` backends remain untested from Ballast's side (they live in the `github.com/tagwright/beacon` module and need a live external endpoint or account this harness doesn't have). |
@@ -272,19 +366,84 @@ sleep. Fixed by having `unregisterContainer` return the service name it
 actually removed, and `watch.go`'s `handleEvent` logging
 `"daemon: service unregistered"` when it isn't empty.
 
+**Seventh bug, fixed this pass**: `config.Config.Splay` -- documented on
+the struct itself as turning "the deterministic per-service splay of period
+aliases ... on or off", parsed from `BALLAST_SPLAY` with its own env-overlay
+code -- was never actually read by `internal/schedule` or `internal/daemon`:
+the four period aliases (`@hourly`/`@daily`/`@weekly`/`@monthly`) were
+always splayed regardless of the setting. This was found and deliberately
+left as a documented gap by the prior pass (the analysis is still preserved
+in git history), specifically because wiring a plain `bool` up naively would
+have made the field's own zero value (`false`) silently *disable* the
+anti-stampede splay by default, contradicting every doc comment describing
+the feature -- a real design decision, not a mechanical fix, at the time.
+
+Fixed this pass by changing `Splay` from `bool` to `*bool` in
+`internal/config/config.go`: `nil` means "never set" and `applyDefaults`
+resolves it to `true` (splay stays on by default, preserving today's
+behavior exactly), while an explicit `splay: false` in `ballast.yml` or
+`BALLAST_SPLAY=false` now actually reaches a concrete `false`.
+`internal/schedule/scheduler.go`'s `Config` gained the identical `*bool`
+field (same nil-means-true default), `Scheduler` resolves it once in `New`
+into a concrete `splay bool`, and `schedule.Parse` gained a `splay bool`
+parameter: when true, it behaves exactly as before (the four aliases land
+on a job-name-derived slot inside the configured window); when false, it
+falls through to `parseCron`, which -- for these particular strings --
+means robfig/cron's own descriptor support, landing each alias on its
+canonical, unsplayed boundary (top of the hour, midnight, Sunday midnight,
+the 1st at midnight) instead. `internal/daemon/daemon.go`'s
+`schedulerConfig` carries `cfg.Splay` straight through. See
+`internal/config/config_test.go`, `internal/schedule/schedule_test.go`'s
+`TestSplayFalse*`, and `internal/schedule/scheduler_test.go`'s
+`TestNewDefaultsSplayOnWhenNil`/`TestNewHonorsExplicitSplayFalse` for the
+tests proving both the default and the override actually take effect.
+
+**Eighth bug, fixed this pass**: writing `run-sftp.sh` found that an
+`sftp:user@host:path` destination -- accepted as config with no validation
+at all, since `Destination.URL` is deliberately opaque, engine-native
+syntax Ballast never parses -- could never actually work in the shipped
+image. restic's sftp backend execs the `ssh` binary on `PATH` to open the
+connection, and the production `Dockerfile`'s `alpine:3.20` runtime stage
+installed nothing but the bundled `restic` binary itself, `ca-certificates`,
+and `tzdata`. Every operation against a real `sftp:` destination would have
+failed with "ssh: executable file not found in $PATH", silently (no
+validation catches it; the failure only ever appears live, mid-backup).
+Fixed by adding `openssh-client` to the `Dockerfile`'s `apk add` line, with
+a comment explaining why it's there (Ballast itself never execs `ssh`;
+restic does, underneath it). `run-sftp.sh` is what actually proves the fix:
+a real backup and restore against a throwaway `atmoz/sftp` server, with
+files confirmed to land on the server's own filesystem independent of
+Ballast's view.
+
+Writing `run-password-secret.sh`'s direct-`restic`-invocation proof (that
+the master-key-derived password is correctly rejected, and the named
+secret's own value is correctly accepted) found the exact same harness-only
+bug `run-retention.sh` had already found and fixed once, in a different
+script: a `:ro`-mounted repository directory makes any `restic` command
+that takes a lock (which `restic snapshots` does by default, same as
+`check`) hang forever retrying a lock-file write that can never succeed,
+rather than surfacing a clean error. Not a bug in Ballast -- neither
+`internal/engine/restic.go` nor any real Ballast operation ever needs to
+run `restic` against a read-only repository mount -- but a real trap for
+any one-off diagnostic `restic` invocation against a repo Ballast itself
+manages. Fixed by adding `--no-lock` to `run-password-secret.sh`'s two
+direct `restic snapshots` checks (the more correct fix here specifically,
+since both are one-shot read-only diagnostics that don't need real lock
+coordination at all, rather than dropping `:ro` the way `run-retention.sh`
+did for its `check --read-data`, which does need to be able to write).
+
 ## What's still unproven, bluntly
 
 - **Real R2.** MinIO proves the code path; it does not prove R2 itself. Run
   a manual backup/restore against a throwaway R2 bucket before trusting a
   production R2 destination.
-- **Time-based retention** (`keep-daily`/`keep-weekly`/`keep-monthly`/
-  `keep-yearly`/`keep-within`). `keep-last` is now proven with an exact
-  surviving-set assertion (`run-retention.sh`), but the time-based keeps
-  need snapshots spread across real (or faked) time to assert
-  deterministically, which no itest attempts. This is restic's own
-  retention math, driven by whichever `--keep-*` flags
-  `internal/engine/restic.go`'s `Forget` sets from the policy, so it is a
-  real gap in what Ballast itself has verified, not just an academic one.
+- **Time-based retention beyond `keep-daily`** (`keep-hourly`/
+  `keep-weekly`/`keep-monthly`/`keep-yearly`/`keep-within`). `keep-last` is
+  proven with an exact surviving-set assertion (`run-retention.sh`), and
+  `keep-daily` is now proven too, at the engine level, with synthetic
+  timestamps (`run-retention-time.sh`, see the coverage matrix). The other
+  five time-based dimensions share the identical `Forget` code path but
+  have no test of their own extending the same technique to them.
 - **Discord, SMTP, webhook notification delivery, and Gatus telemetry.**
   ntfy delivery is now integration-proven end to end through Ballast's own
   orchestrator (`run-notify.sh`); the other three beacon notification
@@ -320,23 +479,24 @@ actually removed, and `watch.go`'s `handleEvent` logging
 - **Individual retention label parsing beyond `retention.last`.**
   `run-retention.sh` proves `keep-last` end to end, and `run-alias.sh`
   additionally proves `retention.last` parses through the
-  `tagwright.backup.*` alias, but `retention.hourly`/`.daily`/`.weekly`/
-  `.monthly`/`.yearly`/`.within`/`.keep-tags` label parsing has no test of
-  its own (time-based retention's *outcome* is separately unproven for the
-  reason above).
+  `tagwright.backup.*` alias. `retention.daily`'s *outcome* is now proven
+  too, at the engine level (`run-retention-time.sh`), though not through a
+  label -- it drives `engine.Restic.Forget` directly with a
+  `RetentionPolicy{Daily: 3}` built by hand, not through
+  `discovery.parseRetention` reading a `ballast.retention.daily` label off
+  a container. `retention.hourly`/`.weekly`/`.monthly`/`.yearly`/`.within`/
+  `.keep-tags` label parsing still has no test of its own, and none of the
+  six dimensions is proven to parse correctly *from a label* the way
+  `retention.last` is.
 - **The indexed `ballast.exclude.<n>` escape hatch.** `run-volumes.sh`
   proves the CSV `ballast.exclude=<glob>` form end to end; the mutually
   exclusive indexed form (and the "setting both is a validation error" rule)
   has no itest of its own.
-- **Splay's on/off toggle.** `config.Config.Splay` is parsed from
-  `BALLAST_SPLAY` (and documented as turning the deterministic per-service
-  splay of period aliases on or off) but is never actually read by
-  `internal/daemon` or `internal/schedule` — the four period aliases are
-  always splayed regardless of this setting. Found during this pass's
-  audit but deliberately left as a documented gap rather than fixed: unlike
-  the exclude-merge bug, `Splay`'s zero value (`false`) would, if wired up
-  naively, *disable* the anti-stampede splay by default, which contradicts
-  every other doc comment's description of the feature — that mismatch
-  needs a real design decision (what should the default be, and does
-  disabling splay mean "always fire at the canonical boundary" or something
-  else), not a mechanical wiring fix assumed under a testing pass.
+- **SFTP host-key pinning.** `run-sftp.sh` proves the SFTP backend and
+  key-based auth work end to end, but disables strict host-key checking
+  (`StrictHostKeyChecking no`, `UserKnownHostsFile /dev/null`) since the
+  throwaway `atmoz/sftp` server's host key is regenerated every run. A real
+  deployment should pin the real server's host key in its own `~/.ssh`
+  config rather than copy the itest's disabled checking; nothing here
+  proves Ballast (or restic) behaves correctly against a *mismatched* host
+  key, only that a correctly-configured connection works.

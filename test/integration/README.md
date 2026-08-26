@@ -3,8 +3,8 @@
 Real end-to-end tests of Ballast against a live Docker socket: build the
 image, stand up throwaway labeled containers with known data, drive Ballast
 through real backups, snapshot listings, and restores, diff the restored
-data against the original, and tear everything down. Thirteen scripts, each
-proving a different path:
+data against the original, and tear everything down. Seventeen scripts,
+each proving a different path:
 
 - **`run.sh`** — filesystem backup/restore against a local repo: a single
   labeled container with known data in a named volume, backup, snapshot
@@ -77,6 +77,27 @@ proving a different path:
   rejected by the daemon's discovery pass (logged, never backed up) and by
   `ballast backup <service>`, which surfaces the real conflict instead of a
   misleading "not found".
+- **`run-password-secret.sh`** — `ballast.password-secret=<name>`: a real
+  backup + restore round-trip, plus the actual proof: direct `restic`
+  invocations (the same binary Ballast bundles) confirm the master-key-
+  derived password (`ballast key`) does **not** open the repository, while
+  the named secret's own value does.
+- **`run-repo-path.sh`** — `ballast.repo.path=<subpath>`: a real backup
+  lands at the overridden sub-path on the host-visible repos directory, and
+  explicitly does **not** exist at the default, un-overridden service-name
+  path; restore round-trips through the same override.
+- **`run-sftp.sh`** — the restic SFTP backend against a throwaway
+  `atmoz/sftp` server: key-based auth via a fresh itest-only keypair, a
+  real backup confirmed to have landed on the SFTP server's own filesystem,
+  and a byte-matching restore. Found a real gap in the shipped image (no
+  `ssh` binary) — see docs/TESTING.md's "Bugs found and fixed".
+- **`run-retention-time.sh`** — not a container itest like the sixteen
+  above: it runs `internal/engine`'s `TestForgetKeepDailyTimeBased`
+  (build-tag `integration`) inside a throwaway `golang:1.25` + `restic`
+  container, seeding a repository with snapshots at controlled synthetic
+  times via `restic backup --time` and exercising the real
+  `engine.Restic.Forget` with a `keep-daily` policy — the one thing no
+  elapsed-time itest can practically prove.
 
 See [docs/TESTING.md](../../docs/TESTING.md) for the full test methodology
 and an honest coverage matrix across all of Ballast, not just this harness.
@@ -112,6 +133,10 @@ bash test/integration/run-volumes.sh       # multi-volume backup, volumes narrow
 bash test/integration/run-dupe.sh          # duplicate service name rejection
 bash test/integration/run-alias.sh         # tagwright.backup.* alias end to end
 bash test/integration/run-conflict.sh      # ballast.*/tagwright.backup.* prefix conflict rejection
+bash test/integration/run-password-secret.sh # ballast.password-secret override, proven against the derived password
+bash test/integration/run-repo-path.sh     # ballast.repo.path override lands at the overridden sub-path
+bash test/integration/run-sftp.sh          # SFTP backend, real atmoz/sftp server
+bash test/integration/run-retention-time.sh # keep-daily time-based retention, at the engine level
 bash test/integration/<script>.sh --keep   # leave ballast-itest-* objects and generated files for inspection
 ```
 
@@ -119,8 +144,14 @@ All of them need a Docker socket at the default location and expect
 `docker info --format '{{.DockerRootDir}}'` to report `/var/lib/docker`
 (the default). If your host's Docker data root differs, add a `host_roots`
 entry to the relevant `*.itest.yml` mapping the real volumes path to
-itself before running (`run-stream.sh` and `run-notify.sh` back up no
-filesystem paths at all, so this only matters for the rest).
+itself before running (`run-stream.sh`, `run-notify.sh`, and `run-sftp.sh`
+back up no filesystem paths at all, so this only matters for the rest).
+
+`run-retention-time.sh` doesn't take `--keep`: it creates one throwaway
+container (`ballast-itest-retention-time-runner`) that only ever holds a Go
+test's own `t.TempDir()` state, already gone once the container exits, so
+there is nothing left to inspect afterward beyond the test output it
+already prints in full.
 
 ## Files
 
@@ -128,43 +159,65 @@ filesystem paths at all, so this only matters for the rest).
   `retention.itest.yml`, `hooks.itest.yml`, `stop.itest.yml`,
   `notify.itest.yml`, `watch.itest.yml`, `splay.itest.yml`,
   `volumes.itest.yml`, `dupe.itest.yml`, `alias.itest.yml`,
-  `conflict.itest.yml` — committed. Minimal configs for each script: one
+  `conflict.itest.yml`, `password-secret.itest.yml`, `repo-path.itest.yml`,
+  `sftp.itest.yml` — committed. Minimal configs for each script: one
   destination each (`local` for all but `run-s3.sh`, which points
-  `s3test` at the MinIO container). None configure `notifications` except
+  `s3test` at the MinIO container, and `run-sftp.sh`, which points `sftp`
+  at the atmoz/sftp container). None configure `notifications` except
   `notify.itest.yml`, whose whole point is exercising that config path
   against a real ntfy server; everywhere else the notifier falls back to
   beacon's built-in `log` channel and needs no secrets beyond the master
-  key (and, for `run-s3.sh`, the MinIO credentials).
+  key (and, for `run-s3.sh`, the MinIO credentials; `run-sftp.sh` needs no
+  destination secrets at all, since its auth goes through a mounted SSH
+  key, not a Ballast-resolved credential).
   `stream.itest.yml`/`hooks.itest.yml` are the ones that need
   `BALLAST_ENABLE_EXEC=true`, and `stop.itest.yml` needs
   `BALLAST_ENABLE_STOP=true`, each set by its script on the ballast run
   containers rather than in the config file, since those gates are meant
   to be scoped to exactly where they're used (`splay.itest.yml` follows the
   same pattern: its script sets `BALLAST_ENABLE_EXEC=true` on the daemon
-  container only, not in the file).
+  container only, not in the file). `run-retention-time.sh` has no
+  `*.itest.yml` at all: it never runs the `ballast` binary, only a Go test
+  against `engine.Restic` directly.
 - `run.sh`, `run-stream.sh`, `run-s3.sh`, `run-retention.sh`,
   `run-hooks.sh`, `run-stop.sh`, `run-notify.sh`, `run-watch.sh`,
   `run-splay.sh`, `run-volumes.sh`, `run-dupe.sh`, `run-alias.sh`,
-  `run-conflict.sh` — committed. Each automates its own build,
-  service/backend setup, backup, snapshots, restore or
+  `run-conflict.sh`, `run-password-secret.sh`, `run-repo-path.sh`,
+  `run-sftp.sh`, `run-retention-time.sh` — committed. Each automates its
+  own build, service/backend setup, backup, snapshots, restore or
   retention/prune/check, and cleanup.
 - `secrets/repo-master-key` — generated, gitignored, shared by every
-  script except `run-s3.sh` (which needs MinIO credentials alongside it,
-  so it uses its own `secrets-s3/`). A fresh `openssl rand -base64 32`
-  master key, generated once and reused across runs.
+  script except `run-s3.sh` and `run-password-secret.sh` (each of which
+  needs a secret alongside it beyond the master key, so each uses its own
+  `secrets-*/` directory instead). A fresh `openssl rand -base64 32` master
+  key, generated once and reused across runs.
 - `secrets-s3/` — generated, gitignored. `run-s3.sh`'s own master key plus
   `r2-access-key-id`/`r2-secret-access-key` (the MinIO root credentials,
   named after the real R2 secret names so the destination config exercises
   the exact same secret-name wiring a real R2 destination uses).
+- `secrets-password-secret/` — generated, gitignored. `run-password-secret.sh`'s
+  own master key plus `svc-password`, the named secret
+  `ballast.password-secret=svc-password` points at (deliberately not
+  derivable from the master key, so the test's negative assertion — the
+  derived password must NOT open the repository — actually means something).
+- `ssh-sftp/` — generated, gitignored. `run-sftp.sh`'s fresh, itest-only
+  Ed25519 keypair (regenerated every run) plus an `~/.ssh/config`
+  disabling strict host-key checking against the throwaway server; mounted
+  into every `ballast` invocation as `/root/.ssh`.
 - `repos/`, `restore/`, `repos-stream/`, `restore-stream/`, `restore-s3/`,
   `repos-retention/`, `repos-hooks/`, `restore-hooks/`, `repos-stop/`,
   `restore-stop/`, `repos-notify/`, `repos-watch/`, `repos-splay/`,
   `markers-splay/`, `repos-volumes/`, `restore-volumes/`, `repos-dupe/`,
-  `repos-alias/`, `restore-alias/`, `repos-conflict/` — generated,
-  gitignored. The restic repositories and restore targets for each script's
-  run (`run-s3.sh` writes to MinIO, not a local repo path, so it has no
-  `repos-s3/`; `run-retention.sh`, `run-notify.sh`, `run-watch.sh`,
-  `run-dupe.sh`, and `run-conflict.sh` never restore into a local
-  directory, so none of them has a `restore-*/` directory; `markers-splay/`
-  is `run-splay.sh`'s shared bind-mounted host directory for its
-  serialization-proof start/end marker files, not a restic repo at all).
+  `repos-alias/`, `restore-alias/`, `repos-conflict/`,
+  `repos-password-secret/`, `restore-password-secret/`, `repos-repo-path/`,
+  `restore-repo-path/`, `restore-sftp/` — generated, gitignored. The restic
+  repositories and restore targets for each script's run (`run-s3.sh`
+  writes to MinIO and `run-sftp.sh` writes to the SFTP server, neither a
+  local repo path, so neither has a `repos-*/`; `run-retention.sh`,
+  `run-notify.sh`, `run-watch.sh`, `run-dupe.sh`, and `run-conflict.sh`
+  never restore into a local directory, so none of them has a
+  `restore-*/` directory; `markers-splay/` is `run-splay.sh`'s shared
+  bind-mounted host directory for its serialization-proof start/end marker
+  files, not a restic repo at all; `run-retention-time.sh` has neither, its
+  repository lives entirely inside its throwaway container's own
+  `t.TempDir()`).
