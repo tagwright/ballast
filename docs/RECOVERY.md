@@ -99,6 +99,44 @@ Avoid leaving the password in shell history or an unencrypted log. Prefer
 piping it straight into `RESTIC_PASSWORD_FILE` or a password manager over
 pasting it somewhere it will linger.
 
+## Listing and restoring snapshots
+
+Reaching for `ballast key` plus raw `restic` commands is rarely the first
+move. If the Ballast binary and its config are both available, `ballast
+snapshots` and `ballast restore` are the normal way to list and restore a
+service's repository, and they resolve the repository automatically instead
+of making you assemble a restic URL and password by hand.
+
+```
+ballast snapshots <service>
+ballast restore <service> --target /path/to/restore/into
+```
+
+Both commands resolve the repository the same way: if `<service>`'s
+container is currently discoverable via its `ballast.*` labels, its own spec
+builds the repository, exactly as a scheduled backup would. That is the
+common case: the container that owns the repository is just stopped or
+misbehaving, not gone.
+
+For the actual disaster-recovery case, where the container (and its labels)
+no longer exist at all, both commands fall back to explicit flags instead of
+failing:
+
+```
+ballast snapshots <service> --destination <name> [--repo-path <path>]
+ballast restore <service> --destination <name> [--repo-path <path>] --target /path/to/restore/into
+```
+
+`--destination` names a destination from `ballast.yml` directly (what
+`ballast.repo` would otherwise have selected); `--repo-path` overrides the
+sub-path within it if it differs from the service name. `ballast restore`
+also takes `--snapshot <id>` (default `latest`) and repeatable `--include
+<pattern>` to restore a subset of paths.
+
+Only reach for the raw-restic recipe below when the `ballast` binary itself
+is unavailable, or the config it needs isn't recoverable, either of which
+`ballast key` (see above) plus this section's derivation walks you through.
+
 ## Recovery without Ballast
 
 If the Ballast binary itself is unavailable, the derivation is simple enough

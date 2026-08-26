@@ -29,9 +29,29 @@ default_destination: local
 # matching ballast.* label, and any of them can be overridden here (or
 # supplied with no file at all) by the matching BALLAST_* env var.
 schedule: "@daily"
-retention: "7d 4w 6m"
+# Compact "key=value,key=value" form: last, hourly, daily, weekly, monthly,
+# yearly (integers), within (a restic duration, e.g. "30d"), and keep-tags.
+# This is the value applied when a service sets no ballast.retention.*
+# labels at all; a service that labels any retention dimension replaces
+# this wholesale rather than merging with it. Shown here at its own
+# built-in default, daily=7,weekly=4,monthly=6.
+retention: "daily=7,weekly=4,monthly=6"
 secrets_dir: /run/ballast/secrets
 concurrency: 1
+
+# Host-side path prefixes Ballast has mounted, mapped to the path they
+# appear under inside the Ballast container, so a bind-mount's host source
+# (from container inspection) can be resolved to a path Ballast can read.
+#
+# The standard Docker named-volume root, /var/lib/docker/volumes, is
+# ALWAYS included automatically and does not need an entry here: as long
+# as the recommended deploy mounts that same path read-only into the
+# Ballast container (see README.md), named volumes just work. host_roots
+# is only needed for extra bind-mount roots outside that standard layout,
+# merged on top of the automatic default rather than replacing it.
+#
+# host_roots:
+#   /srv/binds: /srv/binds
 
 # Alert channels. Each fires on the orchestrator's outcome per its
 # min_level. Settings that are credentials are secret names, never literal
