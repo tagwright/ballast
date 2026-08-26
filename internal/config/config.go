@@ -90,7 +90,15 @@ type Config struct {
 	// (@daily, @hourly, ...) on or off. Raw cron and "@every <dur>" schedules
 	// are never splayed regardless of this setting. Overridable by
 	// BALLAST_SPLAY.
-	Splay bool `yaml:"splay,omitempty"`
+	//
+	// Splay is a *bool, not a bool, specifically so applyDefaults can tell
+	// "never set" (nil: defaults to true, splay stays on, matching every
+	// other doc comment's description of the feature) apart from "explicitly
+	// set to false" (splay: false in ballast.yml, or BALLAST_SPLAY=false):
+	// a plain bool's zero value would be indistinguishable from an explicit
+	// false, which would silently disable the anti-stampede splay by
+	// default. Callers past Load always see a non-nil pointer.
+	Splay *bool `yaml:"splay,omitempty"`
 
 	// Retention is the default retention policy string applied when a
 	// service sets no ballast.retention.* labels. Overridable by
@@ -233,7 +241,7 @@ func overlayEnv(cfg *Config) error {
 		if err != nil {
 			return fmt.Errorf("config: BALLAST_SPLAY: %w", err)
 		}
-		cfg.Splay = b
+		cfg.Splay = &b
 	}
 	if v, ok := os.LookupEnv("BALLAST_RETENTION"); ok {
 		cfg.Retention = v
@@ -356,6 +364,10 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Runtime == "" {
 		cfg.Runtime = defaultRuntime
+	}
+	if cfg.Splay == nil {
+		splayEnabled := true
+		cfg.Splay = &splayEnabled
 	}
 	cfg.HostRoots = withDefaultHostRoots(cfg.HostRoots)
 }

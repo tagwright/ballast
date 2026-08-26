@@ -152,7 +152,10 @@ func podmanSocket(cfg *config.Config) string {
 
 // schedulerConfig maps cfg onto schedule.Config: cfg.Window is a single
 // "HH:MM-HH:MM" string (per the label grammar's Fork 6) that schedule.Config
-// wants split into its two clock-time bounds.
+// wants split into its two clock-time bounds. cfg.Splay carries straight
+// through: both are a *bool defaulting to "splay on" when nil, and cfg has
+// already been through config.Load's applyDefaults by the time Run calls
+// this, so cfg.Splay is never actually nil here in practice.
 func schedulerConfig(cfg *config.Config) (schedule.Config, error) {
 	var start, end string
 	if cfg.Window != "" {
@@ -167,5 +170,6 @@ func schedulerConfig(cfg *config.Config) (schedule.Config, error) {
 		WindowStart: start,
 		WindowEnd:   end,
 		Concurrency: cfg.Concurrency,
+		Splay:       cfg.Splay,
 	}, nil
 }

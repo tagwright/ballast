@@ -17,23 +17,23 @@ func mustWindow(t *testing.T, start, end string) Window {
 }
 
 func TestParseEmptyExpression(t *testing.T) {
-	if _, err := Parse("svc", "", mustWindow(t, "01:00", "05:00")); err != ErrEmptySchedule {
+	if _, err := Parse("svc", "", mustWindow(t, "01:00", "05:00"), true); err != ErrEmptySchedule {
 		t.Fatalf("got err %v, want ErrEmptySchedule", err)
 	}
-	if _, err := Parse("svc", "   ", mustWindow(t, "01:00", "05:00")); err != ErrEmptySchedule {
+	if _, err := Parse("svc", "   ", mustWindow(t, "01:00", "05:00"), true); err != ErrEmptySchedule {
 		t.Fatalf("got err %v, want ErrEmptySchedule", err)
 	}
 }
 
 func TestParseInvalidExpression(t *testing.T) {
-	_, err := Parse("svc", "not a schedule", mustWindow(t, "01:00", "05:00"))
+	_, err := Parse("svc", "not a schedule", mustWindow(t, "01:00", "05:00"), true)
 	if err == nil {
 		t.Fatal("expected an error for an unparseable expression")
 	}
 }
 
 func TestParseCronLiteral(t *testing.T) {
-	next, err := Parse("svc", "0 3 * * *", mustWindow(t, "01:00", "05:00"))
+	next, err := Parse("svc", "0 3 * * *", mustWindow(t, "01:00", "05:00"), true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestParseCronLiteral(t *testing.T) {
 }
 
 func TestParseEveryLiteral(t *testing.T) {
-	next, err := Parse("svc", "@every 6h", mustWindow(t, "01:00", "05:00"))
+	next, err := Parse("svc", "@every 6h", mustWindow(t, "01:00", "05:00"), true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -62,11 +62,11 @@ func TestSplayIsStableAndDeterministic(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
 	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
 
-	next1, err := Parse("photo-lab", "@daily", window)
+	next1, err := Parse("photo-lab", "@daily", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	next2, err := Parse("photo-lab", "@daily", window)
+	next2, err := Parse("photo-lab", "@daily", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -82,11 +82,11 @@ func TestHourlySplayWithinHourAndDistinctPerName(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
 	after := time.Date(2026, 8, 25, 10, 30, 0, 0, time.UTC)
 
-	nextA, err := Parse("service-a", "@hourly", window)
+	nextA, err := Parse("service-a", "@hourly", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	nextB, err := Parse("service-b", "@hourly", window)
+	nextB, err := Parse("service-b", "@hourly", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestDailySplayLandsInsideWindow(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
 	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
 
-	next, err := Parse("firefly-db", "@daily", window)
+	next, err := Parse("firefly-db", "@daily", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestDailySplayDistinctAcrossThreeServices(t *testing.T) {
 	names := []string{"ballast-itest-splay-a", "ballast-itest-splay-b", "ballast-itest-splay-c"}
 	slots := make(map[string]time.Time, len(names))
 	for _, name := range names {
-		next, err := Parse(name, "@daily", window)
+		next, err := Parse(name, "@daily", window, true)
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", name, err)
 		}
@@ -163,7 +163,7 @@ func TestDailyDoesNotFireAtCanonicalMidnight(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
 	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
 
-	next, err := Parse("svc", "@daily", window)
+	next, err := Parse("svc", "@daily", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestDailyDoesNotFireAtCanonicalMidnight(t *testing.T) {
 
 func TestDailyAdvancesToNextDayOncePassed(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
-	next, err := Parse("svc", "@daily", window)
+	next, err := Parse("svc", "@daily", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestDailyAdvancesToNextDayOncePassed(t *testing.T) {
 
 func TestWeeklyAnchoredToMonday(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
-	next, err := Parse("svc", "@weekly", window)
+	next, err := Parse("svc", "@weekly", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestWeeklyAnchoredToMonday(t *testing.T) {
 
 func TestMonthlyAnchoredToFirst(t *testing.T) {
 	window := mustWindow(t, "01:00", "05:00")
-	next, err := Parse("svc", "@monthly", window)
+	next, err := Parse("svc", "@monthly", window, true)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -215,6 +215,72 @@ func TestMonthlyAnchoredToFirst(t *testing.T) {
 	}
 	if got.Month() != time.September {
 		t.Fatalf("expected next monthly fire in September, got %v", got.Month())
+	}
+}
+
+// TestSplayFalseFiresAtCanonicalMidnight proves BALLAST_SPLAY=false (splay
+// disabled) actually changes @daily's firing time, not just that the flag
+// parses: with splay off, @daily must land on the canonical, unsplayed
+// midnight boundary instead of the job-name-derived slot inside window,
+// exercising the fix for the "documented but inert" BALLAST_SPLAY bug
+// (config.Config.Splay was parsed and stored but never read by
+// internal/schedule or internal/daemon).
+func TestSplayFalseFiresAtCanonicalMidnight(t *testing.T) {
+	window := mustWindow(t, "01:00", "05:00")
+	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+
+	next, err := Parse("svc", "@daily", window, false)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := next(after)
+	if got.Hour() != 0 || got.Minute() != 0 {
+		t.Fatalf("splay=false: expected @daily to fire at canonical midnight, got %v", got)
+	}
+	if !got.After(after) {
+		t.Fatalf("next fire %v must be after %v", got, after)
+	}
+}
+
+// TestSplayFalseHourlyFiresAtCanonicalTopOfHour is the @hourly analog of
+// TestSplayFalseFiresAtCanonicalMidnight: with splay off, @hourly must fire
+// on the hour, not at a job-name-derived minute within the hour.
+func TestSplayFalseHourlyFiresAtCanonicalTopOfHour(t *testing.T) {
+	window := mustWindow(t, "01:00", "05:00")
+	after := time.Date(2026, 8, 25, 10, 30, 0, 0, time.UTC)
+
+	next, err := Parse("service-a", "@hourly", window, false)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	got := next(after)
+	if got.Minute() != 0 || got.Second() != 0 {
+		t.Fatalf("splay=false: expected @hourly to fire at the top of the hour, got %v", got)
+	}
+	want := time.Date(2026, 8, 25, 11, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// TestSplayFalseStillDistinctFromSplayTrue confirms splay=true and
+// splay=false genuinely diverge for the same job name and schedule: the
+// bug being fixed here is that the setting changed nothing at all.
+func TestSplayFalseStillDistinctFromSplayTrue(t *testing.T) {
+	window := mustWindow(t, "01:00", "05:00")
+	after := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+
+	splayed, err := Parse("photo-lab", "@daily", window, true)
+	if err != nil {
+		t.Fatalf("Parse (splay=true): %v", err)
+	}
+	unsplayed, err := Parse("photo-lab", "@daily", window, false)
+	if err != nil {
+		t.Fatalf("Parse (splay=false): %v", err)
+	}
+
+	if splayed(after).Equal(unsplayed(after)) {
+		t.Fatalf("splay=true and splay=false produced the same firing time %v for the same job; BALLAST_SPLAY has no effect", splayed(after))
 	}
 }
 

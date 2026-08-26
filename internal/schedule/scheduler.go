@@ -49,6 +49,13 @@ type Config struct {
 	// Concurrency caps how many jobs run at once. Defaults to 1 (serial),
 	// matching the grammar's disk/uplink-protection intent.
 	Concurrency int
+
+	// Splay turns the deterministic per-service splay of period aliases
+	// (@daily, @hourly, ...) on or off, mirroring config.Config.Splay. A nil
+	// Splay defaults to true (splay on), matching the top-level config's own
+	// default: only an explicit false actually disables it. Raw cron and
+	// "@every <dur>" schedules are never splayed regardless of this setting.
+	Splay *bool
 }
 
 // entry is a registered job plus its scheduling state.
@@ -68,6 +75,7 @@ type entry struct {
 type Scheduler struct {
 	window      Window
 	concurrency int
+	splay       bool
 
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -100,9 +108,15 @@ func New(cfg Config) (*Scheduler, error) {
 		concurrency = 1
 	}
 
+	splay := true
+	if cfg.Splay != nil {
+		splay = *cfg.Splay
+	}
+
 	return &Scheduler{
 		window:      window,
 		concurrency: concurrency,
+		splay:       splay,
 		entries:     make(map[string]*entry),
 		now:         time.Now,
 		wake:        make(chan struct{}, 1),
@@ -127,7 +141,7 @@ func (s *Scheduler) SetClock(now func() time.Time) {
 // time. A job whose name already exists is replaced: its prior entry is
 // discarded and a fresh next-fire is computed from the current time.
 func (s *Scheduler) Add(job Job) error {
-	next, err := Parse(job.Name, job.Schedule, s.window)
+	next, err := Parse(job.Name, job.Schedule, s.window, s.splay)
 	if err != nil {
 		return fmt.Errorf("schedule: add %q: %w", job.Name, err)
 	}

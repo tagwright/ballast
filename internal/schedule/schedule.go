@@ -82,22 +82,34 @@ func parseClockTime(s string) (time.Duration, error) {
 // Parse turns a ballast.schedule expression into a NextFunc. name seeds the
 // deterministic splay applied to the four period aliases; window bounds
 // where @daily/@weekly/@monthly land. Raw 5-field cron and "@every <dur>"
-// are parsed literally via robfig/cron and never splayed.
-func Parse(name, expr string, window Window) (NextFunc, error) {
+// are always parsed literally via robfig/cron and never splayed, regardless
+// of splay.
+//
+// splay is config.Config.Splay (or schedule.Config.Splay), resolved to a
+// concrete bool by the caller: true (the default) splays the four period
+// aliases as described above; false parses them the same way parseCron
+// would parse any other expression, which for these particular strings
+// means robfig/cron's own descriptor support (its Parser includes the
+// Descriptor option), landing each alias on its canonical, unsplayed
+// boundary (top of the hour, midnight, Sunday midnight, the 1st at
+// midnight) instead.
+func Parse(name, expr string, window Window, splay bool) (NextFunc, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, ErrEmptySchedule
 	}
 
-	switch expr {
-	case "@hourly":
-		return nextHourly(name), nil
-	case "@daily":
-		return nextDaily(name, window), nil
-	case "@weekly":
-		return nextWeekly(name, window), nil
-	case "@monthly":
-		return nextMonthly(name, window), nil
+	if splay {
+		switch expr {
+		case "@hourly":
+			return nextHourly(name), nil
+		case "@daily":
+			return nextDaily(name, window), nil
+		case "@weekly":
+			return nextWeekly(name, window), nil
+		case "@monthly":
+			return nextMonthly(name, window), nil
+		}
 	}
 
 	return parseCron(expr)

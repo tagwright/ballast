@@ -41,6 +41,46 @@ func TestNewAppliesDefaultWindowAndConcurrency(t *testing.T) {
 	}
 }
 
+// TestNewDefaultsSplayOnWhenNil proves the Scheduler-level half of the
+// BALLAST_SPLAY fix: a Config that leaves Splay nil (the zero value for a
+// *bool, and what a caller who never touches the field produces) must still
+// splay by default, not silently disable it.
+func TestNewDefaultsSplayOnWhenNil(t *testing.T) {
+	s, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !s.splay {
+		t.Fatal("Scheduler.splay = false with a nil Config.Splay, want true (splay defaults on)")
+	}
+}
+
+// TestNewHonorsExplicitSplayFalse proves an explicit Splay=false actually
+// reaches the Scheduler, the other half of the fix: before this pass,
+// Config.Splay was parsed and stored but Scheduler never read it at all.
+func TestNewHonorsExplicitSplayFalse(t *testing.T) {
+	disabled := false
+	s, err := New(Config{Splay: &disabled})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if s.splay {
+		t.Fatal("Scheduler.splay = true with Config.Splay = false, want false")
+	}
+
+	if err := s.Add(Job{Name: "svc", Schedule: "@daily"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	s.mu.Lock()
+	next := s.entries["svc"].next
+	s.mu.Unlock()
+
+	got := next(time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC))
+	if got.Hour() != 0 || got.Minute() != 0 {
+		t.Fatalf("splay disabled via Scheduler: expected @daily to fire at canonical midnight, got %v", got)
+	}
+}
+
 func TestNewRejectsInvalidWindow(t *testing.T) {
 	if _, err := New(Config{WindowStart: "not-a-time"}); err == nil {
 		t.Fatal("expected an error for an invalid window")
