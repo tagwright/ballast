@@ -128,6 +128,13 @@ type Config struct {
 	// secret.DefaultSecretsDir when unset.
 	SecretsDir string `yaml:"secrets_dir,omitempty"`
 
+	// StateDir is the directory Ballast persists cross-restart state in: the
+	// stable host identity, machine-readable run records, and backup-time
+	// manifests. Unlike SecretsDir it must outlive a container recreation, so
+	// its default is under /var/lib rather than /run. Overridable by
+	// BALLAST_STATE_DIR.
+	StateDir string `yaml:"state_dir,omitempty"`
+
 	// EnableExec is the global gate for exec.pre, exec.post, and stream
 	// labels. Overridable by BALLAST_ENABLE_EXEC. Defaults to false.
 	EnableExec bool `yaml:"enable_exec,omitempty"`
@@ -175,6 +182,7 @@ const (
 	defaultSchedule    = "@daily"
 	defaultConcurrency = 1
 	defaultSecretsDir  = "/run/ballast/secrets"
+	defaultStateDir    = "/var/lib/ballast"
 	defaultRuntime     = "docker"
 )
 
@@ -264,6 +272,9 @@ func overlayEnv(cfg *Config) error {
 	}
 	if v, ok := os.LookupEnv("BALLAST_SECRETS_DIR"); ok {
 		cfg.SecretsDir = v
+	}
+	if v, ok := os.LookupEnv("BALLAST_STATE_DIR"); ok {
+		cfg.StateDir = v
 	}
 	if v, ok := os.LookupEnv("BALLAST_PRUNE_SCHEDULE"); ok {
 		cfg.PruneSchedule = v
@@ -361,6 +372,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.SecretsDir == "" {
 		cfg.SecretsDir = defaultSecretsDir
+	}
+	if cfg.StateDir == "" {
+		cfg.StateDir = defaultStateDir
 	}
 	if cfg.Runtime == "" {
 		cfg.Runtime = defaultRuntime

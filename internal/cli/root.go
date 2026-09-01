@@ -14,6 +14,7 @@
 //	ballast daemon              run the long-running service (the
 //	                             container's default command)
 //	ballast version              print the build version
+//	ballast identity             print this host's stable host_id
 //	ballast key <service>        print a service's repository password
 //	                             (disaster recovery)
 //	ballast snapshots [service]  list snapshots
@@ -74,6 +75,7 @@ run it; the other subcommands cover disaster recovery and one-off runs.`,
 	root.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn, error")
 
 	root.AddCommand(newVersionCmd(version))
+	root.AddCommand(newIdentityCmd())
 	root.AddCommand(newDaemonCmd())
 	root.AddCommand(newKeyCmd())
 	root.AddCommand(newSnapshotsCmd())
