@@ -105,6 +105,14 @@ type BackupResult struct {
 	BytesAdded uint64
 	FilesNew   uint64
 	Duration   time.Duration
+
+	// BytesProcessed and FilesProcessed are the totals the engine scanned for
+	// this snapshot (not just the new/changed bytes in BytesAdded/FilesNew).
+	// restic reports them in its summary; the run record surfaces them as its
+	// nullable bytes_processed/files_processed. They are zero, not an error,
+	// for an engine or a backup that does not report them.
+	BytesProcessed uint64
+	FilesProcessed uint64
 }
 
 // RetentionPolicy mirrors restic's keep-* policy. A zero int means the dimension

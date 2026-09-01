@@ -17,6 +17,7 @@ import (
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/engine"
+	"github.com/tagwright/ballast/internal/hostid"
 	"github.com/tagwright/ballast/internal/orchestrator"
 	"github.com/tagwright/ballast/internal/schedule"
 	"github.com/tagwright/ballast/internal/secret"
@@ -31,7 +32,7 @@ const defaultDockerSocket = "/var/run/docker.sock"
 // discovery pass, and then drives the scheduler and the runtime's lifecycle
 // watch until ctx is cancelled. Signal handling belongs to the caller: Run
 // itself only ever reacts to ctx.
-func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
+func Run(ctx context.Context, configPath, version string, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -39,6 +40,17 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("daemon: load config: %w", err)
+	}
+
+	// The stable host identity gates run-record writing: without it a record
+	// would carry no valid host_id, so if it cannot be resolved recording is
+	// left off (recordStateDir stays empty) rather than writing invalid
+	// records. Backups themselves are unaffected.
+	hostID, herr := hostid.LoadOrCreate(cfg.StateDir)
+	recordStateDir := cfg.StateDir
+	if herr != nil {
+		logger.Warn("daemon: host identity unavailable; run records disabled", "error", herr)
+		recordStateDir = ""
 	}
 
 	resolver := secret.FileEnvResolver(cfg.SecretsDir)
@@ -84,6 +96,10 @@ func Run(ctx context.Context, configPath string, logger *slog.Logger) error {
 		Master:   master,
 		Notifier: notifier,
 		Logger:   logger,
+		StateDir: recordStateDir,
+		HostID:   hostID,
+		Version:  version,
+		Trigger:  "schedule",
 	}
 
 	reg := newRegistry()

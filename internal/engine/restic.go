@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +29,13 @@ import (
 type Restic struct {
 	// binary is the path to the restic executable.
 	binary string
+
+	// versionOnce guards a single `restic version` invocation, whose parsed
+	// result is cached in version for the life of the driver. The version is
+	// provenance for the run record, not a hot path, so one lazy call is
+	// enough.
+	versionOnce sync.Once
+	version     string
 }
 
 // NewRestic returns a restic driver using the given binary path (default
@@ -43,6 +51,28 @@ func NewRestic(binary string) *Restic {
 var _ Engine = (*Restic)(nil)
 
 func (r *Restic) Name() string { return "restic" }
+
+// Version returns the restic binary's version string (e.g. "0.19.1"), for the
+// run record's engine.version provenance. It shells out to `restic version`
+// once and caches the parsed result. A version it cannot determine is
+// reported as "unknown" rather than an error, so a run record is always
+// producible: the field is provenance, never load bearing.
+func (r *Restic) Version(ctx context.Context) string {
+	r.versionOnce.Do(func() {
+		r.version = "unknown"
+		out, err := exec.CommandContext(ctx, r.binary, "version").Output()
+		if err != nil {
+			return
+		}
+		// `restic version` prints e.g. "restic 0.19.1 compiled with go1.24 on
+		// linux/amd64". Take the second whitespace field.
+		fields := strings.Fields(string(out))
+		if len(fields) >= 2 && fields[0] == "restic" && fields[1] != "" {
+			r.version = fields[1]
+		}
+	})
+	return r.version
+}
 
 func (r *Restic) EnsureRepo(ctx context.Context, repo Repo) error {
 	_, err := r.run(ctx, repo, nil, "cat", "config")
@@ -140,11 +170,13 @@ func (r *Restic) Backup(ctx context.Context, req BackupRequest) (BackupResult, e
 // emits "status", "verbose_status", and "error" messages on the way there,
 // which are parsed and discarded.
 type resticBackupMessage struct {
-	MessageType   string  `json:"message_type"`
-	SnapshotID    string  `json:"snapshot_id"`
-	DataAdded     uint64  `json:"data_added"`
-	FilesNew      uint64  `json:"files_new"`
-	TotalDuration float64 `json:"total_duration"`
+	MessageType         string  `json:"message_type"`
+	SnapshotID          string  `json:"snapshot_id"`
+	DataAdded           uint64  `json:"data_added"`
+	FilesNew            uint64  `json:"files_new"`
+	TotalDuration       float64 `json:"total_duration"`
+	TotalBytesProcessed uint64  `json:"total_bytes_processed"`
+	TotalFilesProcessed uint64  `json:"total_files_processed"`
 }
 
 // parseBackupSummary scans the newline-delimited JSON restic backup --json
@@ -171,10 +203,12 @@ func parseBackupSummary(stdout []byte) (BackupResult, error) {
 		}
 
 		return BackupResult{
-			SnapshotID: msg.SnapshotID,
-			BytesAdded: msg.DataAdded,
-			FilesNew:   msg.FilesNew,
-			Duration:   time.Duration(msg.TotalDuration * float64(time.Second)),
+			SnapshotID:     msg.SnapshotID,
+			BytesAdded:     msg.DataAdded,
+			FilesNew:       msg.FilesNew,
+			Duration:       time.Duration(msg.TotalDuration * float64(time.Second)),
+			BytesProcessed: msg.TotalBytesProcessed,
+			FilesProcessed: msg.TotalFilesProcessed,
 		}, nil
 	}
 	if err := scanner.Err(); err != nil {

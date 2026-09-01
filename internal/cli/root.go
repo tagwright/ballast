@@ -76,11 +76,11 @@ run it; the other subcommands cover disaster recovery and one-off runs.`,
 
 	root.AddCommand(newVersionCmd(version))
 	root.AddCommand(newIdentityCmd())
-	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newDaemonCmd(version))
 	root.AddCommand(newKeyCmd())
 	root.AddCommand(newSnapshotsCmd())
 	root.AddCommand(newRestoreCmd())
-	root.AddCommand(newBackupCmd())
+	root.AddCommand(newBackupCmd(version))
 
 	return root
 }

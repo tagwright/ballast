@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
@@ -38,9 +39,11 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 
 		var err error
 		if len(spec.Paths) > 0 {
-			if berr := runFilesystemBackup(ctx, spec, repo, d); berr != nil {
+			res, berr := runFilesystemBackup(ctx, spec, repo, d)
+			if berr != nil {
 				err = fmt.Errorf("filesystem backup: %w", berr)
 			} else {
+				out.fsResult = &res
 				// The filesystem pass succeeded and, if stop was requested, the
 				// workload is still stopped here (its restart defer has not yet
 				// fired), so the manifest is hashed over the same quiesced tree
@@ -49,7 +52,9 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 			}
 		}
 		for _, stream := range spec.Streams {
-			if serr := runStreamBackup(ctx, spec, stream, repo, d); serr != nil {
+			so, serr := runStreamBackup(ctx, spec, stream, repo, d)
+			out.streams = append(out.streams, so)
+			if serr != nil {
 				err = combine(err, fmt.Errorf("stream %q backup: %w", stream.ID, serr))
 			}
 		}
@@ -68,8 +73,10 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 		}
 		policy = p
 	}
-	if err := d.Engine.Forget(ctx, repo, policy); err != nil {
-		return fmt.Errorf("forget: %w", err)
+	ferr := d.Engine.Forget(ctx, repo, policy)
+	out.retention = &retentionOutcome{applied: ferr == nil, err: ferr}
+	if ferr != nil {
+		return fmt.Errorf("forget: %w", ferr)
 	}
 	return nil
 }
@@ -115,8 +122,9 @@ func autoTags(spec *discovery.BackupSpec, kind string) []string {
 	return tags
 }
 
-// runFilesystemBackup writes one snapshot of spec.Paths.
-func runFilesystemBackup(ctx context.Context, spec *discovery.BackupSpec, repo engine.Repo, d Deps) error {
+// runFilesystemBackup writes one snapshot of spec.Paths, returning the
+// engine's result so the run record can report its bytes and files.
+func runFilesystemBackup(ctx context.Context, spec *discovery.BackupSpec, repo engine.Repo, d Deps) (engine.BackupResult, error) {
 	req := engine.BackupRequest{
 		Repo:          repo,
 		Host:          spec.Service,
@@ -125,8 +133,21 @@ func runFilesystemBackup(ctx context.Context, spec *discovery.BackupSpec, repo e
 		ExcludeCaches: spec.ExcludeCaches,
 		Paths:         spec.Paths,
 	}
-	_, err := d.Engine.Backup(ctx, req)
-	return err
+	return d.Engine.Backup(ctx, req)
+}
+
+// clampExit forces an exit code into the record's 0 to 255 range. A process
+// terminated by a signal reports -1 through Go's ExitCode; that and any other
+// out-of-range value become 1 (generic failure), so the record never carries
+// an exit code the schema rejects.
+func clampExit(code int) int {
+	if code < 0 {
+		return 1
+	}
+	if code > 255 {
+		return 255
+	}
+	return code
 }
 
 // runStreamBackup execs stream's dump command in the container and pipes its
@@ -149,7 +170,10 @@ func runFilesystemBackup(ctx context.Context, spec *discovery.BackupSpec, repo e
 // regardless of that race, the dump's exit is always checked (not only when
 // wait hasn't already fired), and if it failed, any snapshot the engine
 // reports as written is explicitly deleted before returning the dump error.
-func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream discovery.StreamSpec, repo engine.Repo, d Deps) error {
+func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream discovery.StreamSpec, repo engine.Repo, d Deps) (streamOutcome, error) {
+	start := time.Now()
+	oc := streamOutcome{id: stream.ID, filename: stream.Filename}
+
 	sctx := ctx
 	if stream.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -162,7 +186,10 @@ func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream dis
 		User: stream.User,
 	})
 	if err != nil {
-		return fmt.Errorf("exec dump: %w", err)
+		oc.exit = 1
+		oc.duration = time.Since(start)
+		oc.err = fmt.Errorf("exec dump: %w", err)
+		return oc, oc.err
 	}
 
 	wait := &streamWaitReader{r: handle.Stdout, wait: handle.Wait}
@@ -183,12 +210,10 @@ func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream dis
 	// before consuming stdin. Check the dump's own exit unconditionally
 	// (not only when wait hasn't already fired) so wait.err below reflects
 	// it even when Backup reported success.
-	if !wait.waited {
-		if _, werr := handle.Wait(); werr != nil {
-			wait.waited = true
-			wait.waitErr = fmt.Errorf("dump exited non-zero: %w", werr)
-		}
-	}
+	wait.ensureWaited()
+
+	oc.bytes = wait.read
+	oc.exit = clampExit(wait.exitCode)
 
 	if dumpErr := wait.err(); dumpErr != nil {
 		// The dump failed. Whatever the engine did with the partial (or
@@ -201,13 +226,21 @@ func runStreamBackup(ctx context.Context, spec *discovery.BackupSpec, stream dis
 		if res.SnapshotID != "" {
 			delCtx := context.WithoutCancel(ctx)
 			if derr := d.Engine.DeleteSnapshot(delCtx, repo, res.SnapshotID); derr != nil {
-				return fmt.Errorf("%w (additionally failed to delete resulting snapshot %s: %v)", dumpErr, res.SnapshotID, derr)
+				oc.err = fmt.Errorf("%w (additionally failed to delete resulting snapshot %s: %v)", dumpErr, res.SnapshotID, derr)
+				oc.duration = time.Since(start)
+				return oc, oc.err
 			}
 		}
-		return dumpErr
+		oc.err = dumpErr
+		oc.duration = time.Since(start)
+		return oc, oc.err
 	}
 
-	return backupErr
+	oc.result = res
+	oc.produced = res.SnapshotID != ""
+	oc.err = backupErr
+	oc.duration = time.Since(start)
+	return oc, backupErr
 }
 
 // streamWaitReader wraps a stream dump's stdout. On the first read that
@@ -219,28 +252,41 @@ type streamWaitReader struct {
 	r    io.Reader
 	wait func() (exitCode int, err error)
 
-	waited  bool
-	waitErr error
+	read     uint64
+	waited   bool
+	exitCode int
+	waitErr  error
 }
 
-// err returns the dump's non-zero-exit error, if Read has already observed
-// one (via EOF) or a caller has set it directly after calling wait itself.
-// It is nil if the dump hasn't been waited on yet or exited zero.
+// ensureWaited calls wait exactly once, recording the dump's exit code and, if
+// it exited non-zero, the resulting error. It is idempotent, so both the EOF
+// path in Read and the unconditional check in runStreamBackup can call it.
+func (s *streamWaitReader) ensureWaited() {
+	if s.waited {
+		return
+	}
+	s.waited = true
+	code, werr := s.wait()
+	s.exitCode = code
+	if werr != nil {
+		s.waitErr = fmt.Errorf("dump exited non-zero: %w", werr)
+	}
+}
+
+// err returns the dump's non-zero-exit error, if it has been waited on and
+// exited non-zero. It is nil if the dump hasn't been waited on yet or exited
+// zero.
 func (s *streamWaitReader) err() error {
 	return s.waitErr
 }
 
 func (s *streamWaitReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
+	s.read += uint64(n)
 	if err != io.EOF {
 		return n, err
 	}
-	if !s.waited {
-		s.waited = true
-		if _, werr := s.wait(); werr != nil {
-			s.waitErr = fmt.Errorf("dump exited non-zero: %w", werr)
-		}
-	}
+	s.ensureWaited()
 	if s.waitErr != nil {
 		return n, s.waitErr
 	}

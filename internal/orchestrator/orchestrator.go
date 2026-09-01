@@ -50,10 +50,35 @@ type Deps struct {
 	Logger   *slog.Logger
 
 	// StateDir, when non-empty, is where Ballast writes per-run state: the
-	// backup-time manifest for a service with verify configured. Empty
-	// disables every such write, leaving a bare RunBackup (and every existing
-	// caller and test that does not set it) byte-for-byte unchanged.
+	// backup-time manifest for a service with verify configured, and the
+	// machine-readable run record. Empty disables every such write, leaving a
+	// bare RunBackup (and every existing caller and test that does not set it)
+	// byte-for-byte unchanged.
 	StateDir string
+
+	// HostID is the stable host identity the run record keys its host on. It
+	// is only read when a run record is produced (StateDir set or JSON true).
+	HostID string
+
+	// Version is the ballast build version stamped into the run record's
+	// ballast_version. Only read when a run record is produced.
+	Version string
+
+	// Trigger is what started the run (schedule, manual, event, remote) for the
+	// run record. Only read when a run record is produced.
+	Trigger string
+
+	// RequestedBy is the remote requester's free identity, for a remote
+	// trigger. Nil (a null in the record) otherwise.
+	RequestedBy *string
+
+	// JSON, when true, emits the run record on Stdout in addition to writing it
+	// under StateDir.
+	JSON bool
+
+	// Stdout is where the JSON run record is emitted when JSON is true. A nil
+	// Stdout falls back to os.Stdout.
+	Stdout io.Writer
 }
 
 // logger returns d.Logger, falling back to slog.Default() if unset.
@@ -106,7 +131,9 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 	}
 
 	if runErr == nil && spec.ExecPre != nil {
-		if err := runHook(ctx, d.Runtime, spec.ContainerID, spec.ExecPre); err != nil {
+		oc, err := runHook(ctx, d.Runtime, spec.ContainerID, spec.ExecPre)
+		out.pre = &oc
+		if err != nil {
 			runErr = fmt.Errorf("orchestrator: pre-hook: %w", err)
 		}
 	}
@@ -116,12 +143,17 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 	}
 
 	if spec.ExecPost != nil {
-		if err := runHook(ctx, d.Runtime, spec.ContainerID, spec.ExecPost); err != nil {
+		oc, err := runHook(ctx, d.Runtime, spec.ContainerID, spec.ExecPost)
+		out.post = &oc
+		if err != nil {
 			log.Warn("orchestrator: post-hook failed", "service", spec.Service, "error", err)
 		}
 	}
 
-	reportOutcome(ctx, d, spec, runErr, time.Since(start), log)
+	finished := time.Now()
+	reportOutcome(ctx, d, spec, runErr, finished.Sub(start), log)
+
+	emitRunRecord(spec, d, log, out, runErr, start, finished)
 
 	return runErr
 }
@@ -180,7 +212,10 @@ func joinRepoURL(base, sub string) string {
 // "sh -c" since HookSpec.Command is a single shell command line, not an
 // argv. Stdout is drained and discarded; a non-zero exit is returned as an
 // error.
-func runHook(ctx context.Context, rt runtime.Runtime, containerID string, hook *discovery.HookSpec) error {
+func runHook(ctx context.Context, rt runtime.Runtime, containerID string, hook *discovery.HookSpec) (hookOutcome, error) {
+	start := time.Now()
+	oc := hookOutcome{}
+
 	hctx := ctx
 	if hook.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -193,16 +228,26 @@ func runHook(ctx context.Context, rt runtime.Runtime, containerID string, hook *
 		User: hook.User,
 	})
 	if err != nil {
-		return fmt.Errorf("exec: %w", err)
+		oc.exit = 1
+		oc.duration = time.Since(start)
+		oc.err = fmt.Errorf("exec: %w", err)
+		return oc, oc.err
 	}
 
 	if _, err := io.Copy(io.Discard, handle.Stdout); err != nil {
-		return fmt.Errorf("drain output: %w", err)
+		oc.exit = 1
+		oc.duration = time.Since(start)
+		oc.err = fmt.Errorf("drain output: %w", err)
+		return oc, oc.err
 	}
-	if _, err := handle.Wait(); err != nil {
-		return fmt.Errorf("non-zero exit: %w", err)
+	code, werr := handle.Wait()
+	oc.exit = clampExit(code)
+	oc.duration = time.Since(start)
+	if werr != nil {
+		oc.err = fmt.Errorf("non-zero exit: %w", werr)
+		return oc, oc.err
 	}
-	return nil
+	return oc, nil
 }
 
 // reportOutcome builds a beacon.Notification and beacon.Health from runErr

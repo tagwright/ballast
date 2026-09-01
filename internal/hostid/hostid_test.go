@@ -32,12 +32,12 @@ func TestValid(t *testing.T) {
 	}{
 		{"h_3f9c1a2b7e8d4c5f", true},
 		{"h_dead", true},
-		{"h_dea", false},               // fewer than 4 hex
-		{"h_DEADBEEF", false},          // uppercase not allowed
-		{"3f9c1a2b", false},            // missing prefix
-		{"h_", false},                  // no hex
-		{"h_" + longHex(65), false},    // more than 64 hex
-		{"h_" + longHex(64), true},     // exactly 64 hex
+		{"h_dea", false},            // fewer than 4 hex
+		{"h_DEADBEEF", false},       // uppercase not allowed
+		{"3f9c1a2b", false},         // missing prefix
+		{"h_", false},               // no hex
+		{"h_" + longHex(65), false}, // more than 64 hex
+		{"h_" + longHex(64), true},  // exactly 64 hex
 	}
 	for _, c := range cases {
 		if got := Valid(c.id); got != c.want {

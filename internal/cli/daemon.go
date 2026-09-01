@@ -15,8 +15,9 @@ import (
 // the container's default command: daemon.Run does all of its own wiring
 // (config, secrets, notifier, runtime, engine, scheduler), so this command
 // only needs to build the logger, install a signal-driven context, and
-// call it.
-func newDaemonCmd() *cobra.Command {
+// call it. version is threaded through so the daemon can stamp run records
+// with ballast_version.
+func newDaemonCmd(version string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the Ballast backup daemon",
@@ -36,7 +37,7 @@ This is the container's default command.`,
 			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
 
-			return daemon.Run(ctx, cfgFile, logger)
+			return daemon.Run(ctx, cfgFile, version, logger)
 		},
 	}
 }

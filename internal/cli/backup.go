@@ -8,12 +8,16 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tagwright/ballast/internal/discovery"
+	"github.com/tagwright/ballast/internal/hostid"
 	"github.com/tagwright/ballast/internal/orchestrator"
 )
 
-// newBackupCmd builds "ballast backup <service>".
-func newBackupCmd() *cobra.Command {
-	return &cobra.Command{
+// newBackupCmd builds "ballast backup <service>". version stamps the run
+// record's ballast_version.
+func newBackupCmd(version string) *cobra.Command {
+	var jsonOut bool
+
+	cmd := &cobra.Command{
 		Use:   "backup <service>",
 		Short: "Force a backup now",
 		Long: `backup runs <service>'s full backup lifecycle immediately, exactly as the
@@ -24,7 +28,10 @@ report through the same notification channels a scheduled run uses.
 <service>'s container must be running right now and discoverable via its
 ballast.* (or tagwright.backup.*) labels, with ballast.enable=true: this
 command has no disaster-recovery fallback, unlike "snapshots" and
-"restore", because there is nothing to back up once the container is gone.`,
+"restore", because there is nothing to back up once the container is gone.
+
+With --json the ballast.run.v1 record for the run is written to stdout (and,
+as always, to the state directory).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := args[0]
@@ -36,6 +43,17 @@ command has no disaster-recovery fallback, unlike "snapshots" and
 			defer func() { _ = d.Runtime.Close() }()
 			if err := d.withNotifier(); err != nil {
 				return err
+			}
+
+			// The stable host identity gates run-record writing: without it a
+			// record would carry no valid host_id, so recording is left off
+			// rather than writing an invalid record. The backup itself runs
+			// regardless.
+			hostID, herr := hostid.LoadOrCreate(d.Config.StateDir)
+			recordStateDir := d.Config.StateDir
+			if herr != nil {
+				d.Logger.Warn("host identity unavailable; run record disabled", "error", herr)
+				recordStateDir = ""
 			}
 
 			ctx := cmd.Context()
@@ -68,14 +86,28 @@ command has no disaster-recovery fallback, unlike "snapshots" and
 				Master:   d.Master,
 				Notifier: d.Notifier,
 				Logger:   d.Logger,
+				StateDir: recordStateDir,
+				HostID:   hostID,
+				Version:  version,
+				Trigger:  "manual",
+				JSON:     jsonOut,
+				Stdout:   cmd.OutOrStdout(),
 			}
 
 			if err := orchestrator.RunBackup(ctx, spec, deps); err != nil {
 				return fmt.Errorf("backup %q: %w", service, err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "backup complete: %s\n", service)
+			// In --json mode stdout is reserved for the run record, so the
+			// human completion line is suppressed rather than appended after
+			// the JSON document.
+			if !jsonOut {
+				fmt.Fprintf(cmd.OutOrStdout(), "backup complete: %s\n", service)
+			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the ballast.run.v1 record for the run on stdout")
+	return cmd
 }
