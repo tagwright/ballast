@@ -83,3 +83,32 @@ func TestLoadFileSplayFalseSurvivesNoEnvOverride(t *testing.T) {
 		t.Fatalf("Splay = %v, want explicit false from the config file", cfg.Splay)
 	}
 }
+
+// TestLoadLogFormatDefault proves log.format defaults to "text".
+func TestLoadLogFormatDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Log.Format != "text" {
+		t.Fatalf("Log.Format = %q, want text", cfg.Log.Format)
+	}
+}
+
+// TestLoadLogFormatEnvOverride proves BALLAST_LOG_FORMAT overrides the file
+// and default, and that an unknown value is rejected.
+func TestLoadLogFormatEnvOverride(t *testing.T) {
+	t.Setenv("BALLAST_LOG_FORMAT", "json")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Log.Format != "json" {
+		t.Fatalf("Log.Format = %q, want json", cfg.Log.Format)
+	}
+
+	t.Setenv("BALLAST_LOG_FORMAT", "yaml")
+	if _, err := Load(""); err == nil {
+		t.Fatal("Load: expected error on invalid log.format, got nil")
+	}
+}

@@ -65,6 +65,13 @@ type TelemetryConfig struct {
 	Settings map[string]string `yaml:"settings,omitempty"`
 }
 
+// LogConfig configures Ballast's own logging.
+type LogConfig struct {
+	// Format selects the slog handler: "text" (the default) or "json".
+	// Overridable by BALLAST_LOG_FORMAT.
+	Format string `yaml:"format,omitempty"`
+}
+
 // Config is Ballast's daemon configuration: named destinations plus the
 // global defaults every label-level setting falls back to when a service
 // does not override it.
@@ -167,6 +174,9 @@ type Config struct {
 	// "podman". Overridable by BALLAST_RUNTIME. Defaults to "docker".
 	Runtime string `yaml:"runtime,omitempty"`
 
+	// Log configures Ballast's own logging (the handler format).
+	Log LogConfig `yaml:"log,omitempty"`
+
 	// Socket is the API socket path for whichever engine Runtime selects.
 	// Overridable by BALLAST_SOCKET. Empty means "resolve the engine's own
 	// conventional default": internal/daemon and internal/cli fall back to
@@ -184,6 +194,7 @@ const (
 	defaultSecretsDir  = "/run/ballast/secrets"
 	defaultStateDir    = "/var/lib/ballast"
 	defaultRuntime     = "docker"
+	defaultLogFormat   = "text"
 )
 
 // defaultDockerVolumesRoot is the standard Docker named-volume data root.
@@ -227,6 +238,10 @@ func Load(path string) (*Config, error) {
 
 	if cfg.Runtime != "" && cfg.Runtime != "docker" && cfg.Runtime != "podman" {
 		return nil, fmt.Errorf("config: runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
+	}
+
+	if cfg.Log.Format != "" && cfg.Log.Format != "text" && cfg.Log.Format != "json" {
+		return nil, fmt.Errorf("config: log.format %q, want \"text\" or \"json\"", cfg.Log.Format)
 	}
 
 	applyDefaults(cfg)
@@ -275,6 +290,9 @@ func overlayEnv(cfg *Config) error {
 	}
 	if v, ok := os.LookupEnv("BALLAST_STATE_DIR"); ok {
 		cfg.StateDir = v
+	}
+	if v, ok := os.LookupEnv("BALLAST_LOG_FORMAT"); ok {
+		cfg.Log.Format = v
 	}
 	if v, ok := os.LookupEnv("BALLAST_PRUNE_SCHEDULE"); ok {
 		cfg.PruneSchedule = v
@@ -375,6 +393,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.StateDir == "" {
 		cfg.StateDir = defaultStateDir
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = defaultLogFormat
 	}
 	if cfg.Runtime == "" {
 		cfg.Runtime = defaultRuntime

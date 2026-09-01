@@ -33,6 +33,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/tagwright/ballast/internal/config"
 )
 
 // cfgFile and logLevel back the root command's persistent flags. Cobra
@@ -100,15 +102,33 @@ func newVersionCmd(version string) *cobra.Command {
 	}
 }
 
-// newLogger builds a slog.Logger from the --log-level persistent flag,
-// writing to stderr so stdout stays free for command output that's meant
-// to be captured or piped (snapshot listings, restore confirmations, and
-// especially "ballast key", whose whole contract is a clean stdout).
+// newLogger builds a slog.Logger from the --log-level persistent flag and the
+// config's log.format (default "text", or "json"), writing to stderr so stdout
+// stays free for command output that's meant to be captured or piped (snapshot
+// listings, restore confirmations, "ballast key", and the "backup --json" run
+// record).
+//
+// The format is read via a best-effort config load: a config that fails to
+// load leaves the handler at text, and the real config load on the command's
+// own path surfaces the error. That keeps newLogger's signature and its
+// callers (which build the logger before loading config) unchanged.
 func newLogger() (*slog.Logger, error) {
 	var level slog.Level
 	if err := level.UnmarshalText([]byte(logLevel)); err != nil {
 		return nil, fmt.Errorf("invalid --log-level %q: %w", logLevel, err)
 	}
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+
+	format := "text"
+	if cfg, err := config.Load(cfgFile); err == nil {
+		format = cfg.Log.Format
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if format == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
 	return slog.New(handler), nil
 }
