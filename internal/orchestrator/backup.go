@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
+	"github.com/tagwright/ballast/internal/manifest"
 	"github.com/tagwright/core/runtime"
 )
 
@@ -19,12 +21,13 @@ import (
 // runs and before this function returns, regardless of whether the backups
 // themselves succeeded: the inner closure's defer is scoped tightly around
 // stop-and-backup for exactly that reason.
-func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine.Repo, d Deps, log *slog.Logger) error {
+func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine.Repo, d Deps, log *slog.Logger, out *runOutcome) error {
 	backupErr := func() error {
 		if spec.Stop {
 			if err := d.Runtime.Stop(ctx, spec.ContainerID, defaultStopTimeoutSeconds); err != nil {
 				return fmt.Errorf("stop container: %w", err)
 			}
+			out.stopped = true
 			defer func() {
 				startCtx := context.WithoutCancel(ctx)
 				if err := d.Runtime.Start(startCtx, spec.ContainerID); err != nil {
@@ -37,6 +40,12 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 		if len(spec.Paths) > 0 {
 			if berr := runFilesystemBackup(ctx, spec, repo, d); berr != nil {
 				err = fmt.Errorf("filesystem backup: %w", berr)
+			} else {
+				// The filesystem pass succeeded and, if stop was requested, the
+				// workload is still stopped here (its restart defer has not yet
+				// fired), so the manifest is hashed over the same quiesced tree
+				// the snapshot captured.
+				recordManifest(spec, d, log, out)
 			}
 		}
 		for _, stream := range spec.Streams {
@@ -63,6 +72,31 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 		return fmt.Errorf("forget: %w", err)
 	}
 	return nil
+}
+
+// recordManifest builds and writes the backup-time manifest for spec, but
+// only when the service has verify configured (the opt-in trigger for the
+// hash pass), state recording is enabled (d.StateDir set, a run id was
+// generated), and there is a filesystem tree to hash. The handle is stored on
+// out for the run record.
+//
+// A manifest failure is logged and swallowed: the backup itself has already
+// succeeded, and the manifest is auxiliary compliance evidence, so its
+// failure must not turn a good backup into a failed run. In that case the run
+// record's manifest stays null, exactly as if verify were not configured.
+func recordManifest(spec *discovery.BackupSpec, d Deps, log *slog.Logger, out *runOutcome) {
+	if !spec.VerifyConfigured || d.StateDir == "" || out.runID == "" || len(spec.Paths) == 0 {
+		return
+	}
+
+	location := filepath.Join(d.StateDir, "manifests", spec.Service, out.runID+".json")
+	h, err := manifest.Build(spec.Paths, location)
+	if err != nil {
+		log.Warn("orchestrator: backup-time manifest failed; run record manifest will be null",
+			"service", spec.Service, "error", err)
+		return
+	}
+	out.manifest = &h
 }
 
 // autoTags builds the automatic tag set Ballast applies to every snapshot on

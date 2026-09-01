@@ -24,6 +24,7 @@ import (
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
 	"github.com/tagwright/ballast/internal/secret"
+	"github.com/tagwright/ballast/internal/ulid"
 	"github.com/tagwright/core/runtime"
 )
 
@@ -47,6 +48,12 @@ type Deps struct {
 	Master   []byte
 	Notifier *beacon.Beacon
 	Logger   *slog.Logger
+
+	// StateDir, when non-empty, is where Ballast writes per-run state: the
+	// backup-time manifest for a service with verify configured. Empty
+	// disables every such write, leaving a bare RunBackup (and every existing
+	// caller and test that does not set it) byte-for-byte unchanged.
+	StateDir string
 }
 
 // logger returns d.Logger, falling back to slog.Default() if unset.
@@ -77,6 +84,14 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 	start := time.Now()
 	log := d.logger()
 
+	out := &runOutcome{}
+	if id, err := ulid.New(); err == nil {
+		out.runID = id
+	} else {
+		log.Warn("orchestrator: run id generation failed; per-run state will not be recorded",
+			"service", spec.Service, "error", err)
+	}
+
 	var runErr error
 
 	repo, err := BuildRepo(spec, d.Config, d.Resolver, d.Master)
@@ -97,7 +112,7 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 	}
 
 	if runErr == nil {
-		runErr = runBackupSteps(ctx, spec, repo, d, log)
+		runErr = runBackupSteps(ctx, spec, repo, d, log, out)
 	}
 
 	if spec.ExecPost != nil {

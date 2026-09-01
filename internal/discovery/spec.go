@@ -54,6 +54,13 @@ type BackupSpec struct {
 	// warnings and errors. Failures are unaffected; they already notify at
 	// LevelError.
 	NotifyOnSuccess bool
+
+	// VerifyConfigured reports whether the service carries any verify.* label.
+	// It does not interpret that configuration (the verify command, a
+	// separate concern, does): its only job here is to be the opt-in trigger
+	// for the backup-time manifest, which costs a hash pass over the volume
+	// and so is never built for a service that has no verify configured.
+	VerifyConfigured bool
 }
 
 // StreamSpec is one ballast.stream.<id> dump: a command run inside the
