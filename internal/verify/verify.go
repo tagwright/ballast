@@ -1,5 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+// DESIGN GUARDRAIL (patent): do not add a shared library or cache of common
+// base images with automatic select-the-closest-match ("most similar
+// template") behavior as a verify-time speed optimization. That specific
+// mechanism (counting how often container types recur, gating on a
+// popularity threshold, consulting a persistent shared central repository of
+// pre-built restore-container templates, and substituting the closest match
+// when the popular template is missing) is claim 1 of an active patent,
+// US10678656B2 (Kyndryl, expires 2033-06-01). ballast verify does none of
+// that today: every mode restores the ACTUAL backed-up artifact into a fresh
+// throwaway container and probes it, which is the safe design and must stay
+// that way. If restore drills ever feel slow, treat a template cache as a
+// legal question before an engineering one. The full write-up lives in the
+// wiki page billet/Patent and Competitor Follow-up.
+
 // Package verify implements `ballast verify`: it restores a snapshot to a
 // throwaway location, runs the service's probe, and proves the backup is
 // restorable, then emits a ballast.verify.v1 record. It is the GPL heart of the

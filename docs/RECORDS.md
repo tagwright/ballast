@@ -183,6 +183,17 @@ into `pass` or `fail`. Everything that stops the assertion from running at all,
 a missing snapshot, an unpullable image, a failed or timed-out restore, is
 `inconclusive`, never a silent pass.
 
+**Design guardrail (patent):** every mode restores the actual backed-up
+artifact into a fresh throwaway container and probes it. Do not add a shared
+library or cache of common base images with automatic select-the-closest-match
+("most similar template") behavior as a verify-time speed optimization: that
+specific mechanism (recurrence counting, a popularity threshold, a persistent
+shared central repository of pre-built restore-container templates, and a
+closest-match substitute when the popular template is missing) is claim 1 of
+an active patent, US10678656B2 (Kyndryl, expires 2033-06-01). See the code
+comment at the top of `internal/verify/verify.go` and the wiki page
+billet/Patent and Competitor Follow-up for the full write-up.
+
 ## The inventory record: ballast.inventory.v1
 
 `ballast inventory --json` writes one `ballast.inventory.v1` document to stdout:
