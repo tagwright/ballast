@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,8 +19,10 @@ import (
 // record's ballast_version.
 func newVerifyCmd(version string) *cobra.Command {
 	var (
-		snapshot string
-		jsonOut  bool
+		snapshot    string
+		jsonOut     bool
+		timeout     time.Duration
+		requestedBy string
 	)
 
 	cmd := &cobra.Command{
@@ -46,7 +49,13 @@ destroyed on every exit path, including failure and timeout.
 (or tagwright.backup.*) labels: verify reads the service's image and volume
 layout from it. The verify result is reflected in the exit status (0 for pass,
 non-zero for fail or inconclusive). With --json the ballast.verify.v1 record is
-written to stdout (and, as always, to the state directory).`,
+written to stdout (and, as always, to the state directory).
+
+--timeout overrides the verify.timeout label for this one invocation, bounding
+the same whole-operation wall clock. --requested-by records the verify as a
+remote request (trigger "remote") by the named identity, the path a controller
+like Billet drives; left unset, the record is exactly the local manual-path
+record it is today.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := args[0]
@@ -108,6 +117,21 @@ written to stdout (and, as always, to the state directory).`,
 				Stdout:      cmd.OutOrStdout(),
 			}
 
+			// --requested-by marks this invocation as a remote request (the
+			// path Billet drives): the record's trigger becomes "remote" and
+			// requested_by carries the caller's identity. Unset, the record is
+			// exactly the manual-path record it is today.
+			if cmd.Flags().Changed("requested-by") {
+				deps.Trigger = "remote"
+				deps.RequestedBy = &requestedBy
+			}
+			// --timeout overrides the verify.timeout label for this one run,
+			// bounding the same whole-operation wall clock. Unset, the label
+			// value (or its 10m default) stands unchanged.
+			if cmd.Flags().Changed("timeout") {
+				deps.TimeoutOverride = &timeout
+			}
+
 			v, err := verify.Run(ctx, spec, container, snapshot, deps)
 			if err != nil {
 				return fmt.Errorf("verify %q: %w", service, err)
@@ -135,6 +159,8 @@ written to stdout (and, as always, to the state directory).`,
 
 	cmd.Flags().StringVar(&snapshot, "snapshot", "latest", `snapshot ID to verify, or "latest"`)
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the ballast.verify.v1 record for the verify on stdout")
+	cmd.Flags().DurationVar(&timeout, "timeout", 0, "override the verify.timeout label for this run (Go duration); unset uses the label value or the 10m default")
+	cmd.Flags().StringVar(&requestedBy, "requested-by", "", `record this verify as remotely requested by the given identity (sets trigger "remote"); unset keeps the manual trigger`)
 	return cmd
 }
 

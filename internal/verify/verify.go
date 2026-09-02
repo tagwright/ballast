@@ -71,6 +71,12 @@ type Deps struct {
 	Trigger     string  // schedule, manual, event, remote
 	RequestedBy *string // remote requester identity, nil otherwise
 
+	// TimeoutOverride, when non-nil, replaces spec.Verify.Timeout as the
+	// wall-clock bound for this one invocation (and the timeout_ms the record
+	// reports). Nil leaves the label value (or its 10m default) in force, so an
+	// unset override is byte-for-byte the prior behavior.
+	TimeoutOverride *time.Duration
+
 	// NamePrefix prefixes every throwaway object name. Defaults to
 	// "ballast-verify". Integration tests set it to "ballast-verify-itest" so
 	// their objects are unmistakable and never collide with a real verify.
@@ -138,6 +144,7 @@ type run struct {
 	parentCtx context.Context
 	vctx      context.Context // parentCtx bounded by verify.timeout
 
+	timeout    time.Duration // effective wall clock: the label value, or Deps.TimeoutOverride when set
 	scratchDir string
 }
 
@@ -159,12 +166,16 @@ func Run(ctx context.Context, spec *discovery.BackupSpec, container runtime.Cont
 		td:        &teardown{},
 		parentCtx: ctx,
 	}
+	r.timeout = spec.Verify.Timeout
+	if d.TimeoutOverride != nil {
+		r.timeout = *d.TimeoutOverride
+	}
 	r.v = r.baseRecord(snapshotReq, started)
 
 	// Sweep leftovers from any crashed prior run before creating our own.
 	r.sweepOrphans(ctx)
 
-	vctx, cancel := context.WithTimeout(ctx, spec.Verify.Timeout)
+	vctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	r.vctx = vctx
 
@@ -280,7 +291,7 @@ func (r *run) baseRecord(snapshotReq string, started time.Time) *record.Verify {
 		Probe:             strptr(vspec.Probe),
 		Expect:            strptr(vspec.Expect),
 		Assertion:         assertionFor(vspec.Probe, vspec.Expect),
-		TimeoutMs:         durMs(vspec.Timeout),
+		TimeoutMs:         durMs(r.timeout),
 		StartedAt:         rfc3339(started),
 		Result:            "inconclusive",
 		Reason:            strptr("verify did not run"),

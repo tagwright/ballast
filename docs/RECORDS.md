@@ -136,7 +136,9 @@ Field by field (see the schema for exact types and the null rules):
 - `record` is the constant `ballast.verify.v1`.
 - `verify_id`, `host_id`, `service`, `runtime`, `runtime_ref`, `repo_id`,
   `trigger`, `requested_by`, `engine`, `ballast_version` mean exactly what they
-  do on a run record.
+  do on a run record. `ballast verify --requested-by <who>` sets `trigger` to
+  `remote` and `requested_by` to `<who>`; without it the local CLI path records
+  `manual` and a null `requested_by`.
 - `snapshot_requested` is the `--snapshot` argument as given (`latest` or an
   id); `snapshot_id` and `snapshot_time` are the snapshot actually resolved and
   restored, `null` only when none could be resolved (`snapshot_missing`).
@@ -149,7 +151,8 @@ Field by field (see the schema for exact types and the null rules):
   load-bearing; `image` is `null` in files mode.
 - `assertion` names what decided the outcome: `manifest`, `probe`, or
   `probe_expect` (forced to `manifest` when there is no probe).
-- `timeout_ms` is the declared wall clock.
+- `timeout_ms` is the effective wall clock: the `verify.timeout` label (or its
+  10m default), or the `ballast verify --timeout` override when one was given.
 - `environment` records where the restore ran: `{kind: scratch-dir |
   throwaway-container, location, image, network, network_isolated}`.
   `network_isolated` is the segregation fact, recorded `true` because a
