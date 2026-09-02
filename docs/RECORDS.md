@@ -182,3 +182,57 @@ Only the probe (or, in probe-less files mode, the manifest diff) turns a verify
 into `pass` or `fail`. Everything that stops the assertion from running at all,
 a missing snapshot, an unpullable image, a failed or timed-out restore, is
 `inconclusive`, never a silent pass.
+
+## The inventory record: ballast.inventory.v1
+
+`ballast inventory --json` writes one `ballast.inventory.v1` document to stdout:
+the set of services Ballast currently discovers and would back up and verify, on
+this host, right now. Unlike the run and verify records it is not persisted, it
+is produced on demand and carries no `_id`: it is a point-in-time view a
+controller reads over a process boundary. The Billet agent is that consumer: it
+shells to the `ballast` binary (it never links it) and reads this document for
+its heartbeat, to know which services on a host are enrolled and whether each is
+set up to be proven restorable.
+
+It is built from exactly the same discovery pass and label semantics the daemon
+drives, so the inventory matches what Ballast would actually back up and verify:
+a service appears only when its container is currently discoverable with
+`ballast.enable=true` (or the `tagwright.backup.*` alias), and every field is the
+daemon's own resolved view, never a re-read of raw labels.
+
+Field by field:
+
+- `record` is the constant `ballast.inventory.v1`, the discriminator a reader
+  dispatches on.
+- `host_id` is the same stable host identity the run and verify records key on
+  (see `ballast identity`); inventory is refused if it cannot be resolved, so a
+  document never carries an invalid host.
+- `generated_at` is when the inventory was taken, RFC 3339 UTC with a literal
+  `Z`, like every other timestamp here.
+- `services[]` is one entry per discovered service, sorted by `name` so the same
+  host yields a stable document across heartbeats regardless of the runtime's
+  listing order. Each entry carries:
+  - `name` is the resolved service identity (`ballast.name`, else the compose
+    service, else the container name), the same identity the other records and
+    the other subcommands use.
+  - `runtime` is the engine (`docker` or `podman`) and `runtime_ref` is the same
+    open runtime locator map the run and verify records carry: `container_name`
+    and `container_id` always, `compose_project` when the service belongs to a
+    compose project.
+  - `enabled` is whether the service is opted in. It is always `true` for a
+    listed service, since discovery yields no entry for a container that is not
+    enabled; it is carried explicitly so the field is unambiguous to a reader.
+  - `repo_id` is the destination name, a colon, then the repository path within
+    it, exactly as on a run or verify record, no credentials.
+  - `verify_configured` is whether the service carries any `verify.*` label, the
+    same opt-in flag that turns on the backup-time manifest. `probe_declared` is
+    the narrower fact of whether a `verify.probe` is set. A service can be
+    verify-configured (files mode) without declaring a probe.
+  - `backup_schedule` is the service's own `ballast.schedule` when it set one,
+    and `null` when it did not (the global default schedule then applies). A
+    reader treats `null` as "unset", never as an empty schedule.
+
+The `ballast.inventory.v1` schema is not yet formally frozen. If one is
+published, it lives alongside the run and verify schemas in the
+billet-evidence repository (`billet-evidence/schema/ballast/`), the schema home
+for every Ballast record, and this prose is the contract until then.
