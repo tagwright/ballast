@@ -139,6 +139,9 @@ func parseVerify(norm map[string]string) (VerifySpec, error) {
 	if v.Mode == VerifyModeStreamRestore && v.Restore == "" {
 		return VerifySpec{}, fmt.Errorf("discovery: verify.mode=stream-restore requires a verify.restore command to pipe the dump into")
 	}
+	if (v.Mode == VerifyModeContainer || v.Mode == VerifyModeStreamRestore) && v.Probe == "" {
+		return VerifySpec{}, fmt.Errorf("discovery: verify.mode=%s requires a verify.probe to assert against the throwaway container", v.Mode)
+	}
 
 	return v, nil
 }
