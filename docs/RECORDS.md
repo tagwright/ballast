@@ -1,10 +1,10 @@
-# Machine-readable run records
+# Machine-readable records
 
-Ballast writes one JSON document per backup run: a `ballast.run.v1` record.
-It is the source of truth about what a run did, meant to be read by machines,
-not just tailed in a log. The compliance tooling in the wider tagwright suite
-consumes these records, but the format stands on its own and needs nothing
-external to read.
+Ballast writes one JSON document per backup run (a `ballast.run.v1` record) and
+one per verify (a `ballast.verify.v1` record). They are the source of truth
+about what a run or a verify did, meant to be read by machines, not just tailed
+in a log. The compliance tooling in the wider tagwright suite consumes these
+records, but the format stands on its own and needs nothing external to read.
 
 ## Where records go
 
@@ -98,24 +98,84 @@ config records `manifest: null` and runs no hash pass.
 
 ## The canonical schema
 
-The `ballast.run.v1` schema is frozen and lives in the billet-evidence
-repository, not in this one, alongside `common.v1.json` and worked golden
-examples:
+The `ballast.run.v1` and `ballast.verify.v1` schemas are frozen and live in the
+billet-evidence repository, not in this one, alongside `common.v1.json` and
+worked golden examples:
 
 ```
 billet-evidence/schema/ballast/run.v1.json
+billet-evidence/schema/ballast/verify.v1.json
 billet-evidence/schema/ballast/common.v1.json
 billet-evidence/golden/ballast/run-pass.json
 billet-evidence/golden/ballast/run-fail.json
+billet-evidence/golden/ballast/verify-pass.json
+billet-evidence/golden/ballast/verify-fail.json
+billet-evidence/golden/ballast/verify-inconclusive.json
 ```
 
-`internal/record` in this repository is the Go mirror of that schema, and its
-output validates against it. The schema JSON is intentionally not duplicated
+`internal/record` in this repository is the Go mirror of those schemas, and its
+output validates against them. The schema JSON is intentionally not duplicated
 here.
 
-## Coming next: ballast.verify.v1
+## The verify record: ballast.verify.v1
 
-A companion `ballast.verify.v1` record, one per `ballast verify` invocation,
-is defined in the same frozen schema set and will be written by the verify
-command when it lands. The manifest recorded here is the foundation a
-files-mode verify diffs against. This document will grow to cover it.
+`ballast verify <service>` writes one `ballast.verify.v1` document per
+invocation, the machine-readable proof that a snapshot restores. It goes to:
+
+```
+<state_dir>/verifies/<service>/<verify_id>.json
+```
+
+and, with `ballast verify <service> --json`, to stdout as well (stdout carries
+only the record in that mode). `verify_id` is a ULID, like `run_id`. The record
+keys its evidence on the same stable `host_id`, so a verify is refused if that
+identity cannot be resolved.
+
+Field by field (see the schema for exact types and the null rules):
+
+- `record` is the constant `ballast.verify.v1`.
+- `verify_id`, `host_id`, `service`, `runtime`, `runtime_ref`, `repo_id`,
+  `trigger`, `requested_by`, `engine`, `ballast_version` mean exactly what they
+  do on a run record.
+- `snapshot_requested` is the `--snapshot` argument as given (`latest` or an
+  id); `snapshot_id` and `snapshot_time` are the snapshot actually resolved and
+  restored, `null` only when none could be resolved (`snapshot_missing`).
+- `mode` is the one closed enum on this seam: `files`, `container`, or
+  `stream-restore`.
+- `dataset` is human text describing what was restored; `restored` is its
+  machine form: `{kind: stream|volumes|paths, items}`.
+- `data_engine`, `image`, `probe`, `expect` are the operator's free-string
+  configuration echoed back. `data_engine` is informational and never
+  load-bearing; `image` is `null` in files mode.
+- `assertion` names what decided the outcome: `manifest`, `probe`, or
+  `probe_expect` (forced to `manifest` when there is no probe).
+- `timeout_ms` is the declared wall clock.
+- `environment` records where the restore ran: `{kind: scratch-dir |
+  throwaway-container, location, image, network, network_isolated}`.
+  `network_isolated` is the segregation fact, recorded `true` because a
+  throwaway container is always placed on an internal network (confirmed via
+  the runtime's network inspector).
+- `started_at`, `finished_at`, and the three `*_duration_ms` fields time the
+  verify; the total is judged for RTO and the parts (restore, probe) for
+  tuning.
+- `result` is `pass`, `fail`, or `inconclusive`. `reason_code` is a closed
+  classification and `reason` its human text: a pass carries neither, a
+  non-pass carries both. `inconclusive` (its codes: `probe_timeout`,
+  `restore_failed`, `restore_timeout`, `snapshot_missing`, `image_unavailable`,
+  `scratch_unavailable`, `runtime_unavailable`, `cancelled`, `other`) is never
+  a pass anywhere downstream.
+- `checked` is an open integer map; `files`, `bytes`, `rows` are documented
+  keys, and any other (`documents`, `objects`, ...) is permitted.
+- `manifest_compare` is the files-mode diff against the backup-time manifest
+  (`entries_expected`, `entries_matched`, `mismatched`, `missing`, `extra`),
+  `null` in the other modes.
+- `probe_output` is a bounded excerpt of the probe's stdout (4096 bytes) plus a
+  SHA-256 over the full stdout, `null` when no probe ran.
+- `scratch_destroyed` and `scratch_destroy_error` report the teardown: a leaked
+  scratch copy of production data is a finding in its own right, so cleanup is
+  part of the evidence.
+
+Only the probe (or, in probe-less files mode, the manifest diff) turns a verify
+into `pass` or `fail`. Everything that stops the assertion from running at all,
+a missing snapshot, an unpullable image, a failed or timed-out restore, is
+`inconclusive`, never a silent pass.

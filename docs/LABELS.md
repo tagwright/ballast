@@ -55,6 +55,18 @@ precedence between the two.
 | `tags` | CSV | none | Extra tags appended to Ballast's own automatic tags on every snapshot for this service. |
 | `notify.suppress` | bool | `false` | Mutes this service's alert-channel notifications (both success and failure). The Gatus-style telemetry/health push still runs, since it isn't an alert. |
 | `notify.on-success` | bool | `false` | Notifies this service's successful backups at Warning level instead of Info, so successes surface on channels configured to only forward warnings and errors. Failures already notify at Error and are unaffected. |
+| `verify` | bool | `false` | Bare opt-in: a service carrying any `verify.*` label (or a bare `verify`) has a backup-time manifest built for it, and can be checked with `ballast verify`. |
+| `verify.mode` | `files`, `container`, `stream-restore` | `files` | The restore mechanism. `files` restores to a scratch directory and diffs the restored tree against the backup-time manifest. `container` restores volume data into fresh scratch volumes, boots a throwaway copy of the service image with them attached on an isolated network, and runs the probe inside it. `stream-restore` restores a streamed dump to scratch, boots a throwaway container of the declared image on an isolated network, pipes the dump into the restore client on its stdin, and runs the probe there. |
+| `verify.probe` | string | unset | Shell command run in the throwaway container (`container` and `stream-restore`) or against the scratch directory (`files`); exit 0 is a pass. Required for `container` and `stream-restore`. |
+| `verify.expect` | string | unset | Optional substring or regular expression the probe's stdout must contain, for a row-count or checksum assertion (e.g. `^[1-9][0-9]*$`). |
+| `verify.timeout` | Go duration | `10m` | Wall clock for the whole verify, including image pull and container start. |
+| `verify.image` | string | the service's own image | Image for the throwaway container in `container` and `stream-restore` modes. |
+| `verify.restore` | string | required for `stream-restore` | The dump-ingest command run inside the throwaway container with the restored dump piped to its stdin (e.g. `psql -U app -d app`). |
+| `verify.ready` | string | unset | Optional readiness command, polled inside the throwaway container until it exits 0 (or the timeout elapses) before the dump is imported and the probe runs (e.g. `pg_isready -U app`). |
+| `verify.env.<KEY>` | string | none | Environment entry for the throwaway container, most commonly the bootstrap credentials a database image needs (e.g. `verify.env.POSTGRES_PASSWORD`). These are throwaway-copy bootstrap values, not secrets resolved from a store. |
+| `verify.user` | string | image's default user | User the probe, restore, and ready commands run as inside the throwaway container. |
+| `verify.data-engine` | string | unset | Informational free-string hint recorded as the record's `data_engine` (`postgres`, `mariadb`, `mongo`, `files`, ...). Never validated against a list, never load-bearing; it only spares a consumer from parsing the dataset text. |
+| `verify.schedule` | cron expression or alias | unset | Optional local schedule for single-host operators; the daemon runs the verify on this cadence. Billet drives verify fleet-wide instead, so most deployments leave it unset. |
 
 ## Notes
 
@@ -88,3 +100,21 @@ precedence between the two.
   whether and at what level a service notifies, not which configured beacon
   channel(s) receive it. Every channel in `ballast.yml` still sees every
   non-suppressed notification.
+- **Verify is engine-agnostic.** `verify.mode` is the only closed vocabulary
+  in the verify family; `verify.probe`, `verify.image`, `verify.restore`,
+  `verify.data-engine`, and `verify.env.*` are all free strings you supply.
+  Verifying MariaDB instead of Postgres is a different image, restore command,
+  and probe, not a different mode. Ballast interprets none of them and
+  special-cases no database.
+- **Verify never touches the live service.** Every restored byte lands in a
+  fresh scratch directory or fresh named volumes that ballast created, and any
+  throwaway container is always placed on an isolated (internal) network with
+  no route to production or the internet. The scratch is destroyed on every
+  exit path (including failure and timeout), and the record reports whether it
+  was. In `files` mode the probe runs on the ballast host with the scratch
+  directory as its working directory, so use `files`-mode probes you trust.
+- **A verify verdict is `pass`, `fail`, or `inconclusive`.** Only the probe
+  (or the manifest diff in probe-less `files` mode) produces `pass`/`fail`; a
+  snapshot that cannot be found, an image that cannot be pulled, a restore that
+  fails, or a timeout is `inconclusive`, never a silent pass. The record schema
+  is the frozen `ballast.verify.v1` contract; see [docs/RECORDS.md](RECORDS.md).

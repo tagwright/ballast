@@ -42,10 +42,11 @@ concurrency: 1
 # Directory Ballast persists cross-restart state in: the stable host identity
 # (see "ballast identity"), the machine-readable run records it writes per
 # backup (state_dir/runs/<service>/<run_id>.json, the ballast.run.v1 contract
-# in docs/RECORDS.md), and the backup-time manifests for services that have
-# verify configured. Unlike secrets_dir this must outlive a container
-# recreation, so it lives under /var/lib, not /run. Overridable by
-# BALLAST_STATE_DIR.
+# in docs/RECORDS.md), the verify records it writes per "ballast verify"
+# (state_dir/verifies/<service>/<verify_id>.json, the ballast.verify.v1
+# contract), and the backup-time manifests for services that have verify
+# configured. Unlike secrets_dir this must outlive a container recreation, so
+# it lives under /var/lib, not /run. Overridable by BALLAST_STATE_DIR.
 state_dir: /var/lib/ballast
 
 # Ballast's own logging. format is "text" (the default) or "json"; json swaps
