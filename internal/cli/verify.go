@@ -4,6 +4,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -115,6 +116,17 @@ record it is today.`,
 				Trigger:     "manual",
 				JSON:        jsonOut,
 				Stdout:      cmd.OutOrStdout(),
+			}
+
+			// BALLAST_VERIFY_NAME_PREFIX namespaces every throwaway object a
+			// verify creates (the scratch container, its isolated network, any
+			// scratch volumes). Unset, it stays the "ballast-verify" default. A
+			// controller like Billet sets it so the throwaways it drives are
+			// scoped to its own naming (Billet Product Spec section 10 names
+			// them billet-verify-*), and an operator can tell controller-driven
+			// throwaways apart from a local ballast verify on a busy host.
+			if p := os.Getenv("BALLAST_VERIFY_NAME_PREFIX"); p != "" {
+				deps.NamePrefix = p
 			}
 
 			// --requested-by marks this invocation as a remote request (the
