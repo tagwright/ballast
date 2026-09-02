@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package config loads Ballast's daemon configuration: named destinations,
 // global defaults for anything a label can also set, and the notification

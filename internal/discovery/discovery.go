@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package discovery turns a container's Ballast labels into a validated
 // per-service BackupSpec: the label reader and the volume/service discovery

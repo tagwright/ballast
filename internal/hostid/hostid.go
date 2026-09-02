@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package hostid owns Ballast's stable host identity: the "h_" identifier
 // generated once from a CSPRNG, persisted in the state directory, and loaded

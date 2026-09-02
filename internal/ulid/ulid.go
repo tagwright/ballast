@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package ulid generates ULIDs: 128-bit identifiers rendered as 26 uppercase
 // Crockford base32 characters, sortable by their leading 48-bit millisecond

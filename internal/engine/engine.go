@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package engine defines the backup engine Ballast drives, and the restic
 // implementation of it. Ballast owns discovery, scheduling, and orchestration;

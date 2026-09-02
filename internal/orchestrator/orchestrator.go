@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package orchestrator runs one service's backup lifecycle end to end: it
 // resolves the service's repository, runs the pre-hook, optionally stops the

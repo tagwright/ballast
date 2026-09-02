@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // DESIGN GUARDRAIL (patent): do not add a shared library or cache of common
 // base images with automatic select-the-closest-match ("most similar

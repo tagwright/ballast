@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package schedule turns a service's ballast.schedule label into concrete
 // firing times, and runs a fleet of jobs against those times with bounded

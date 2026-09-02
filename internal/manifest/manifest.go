@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package manifest records a backup-time manifest of a filesystem tree: one
 // entry per regular file with its path, size, and SHA-256. A files-mode

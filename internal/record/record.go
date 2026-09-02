@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package record defines ballast.run.v1, the machine-readable document Ballast
 // writes once per backup run. It is a pure data-and-IO package: the

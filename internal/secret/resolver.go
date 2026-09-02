@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package secret resolves the named-secret references that labels and
 // Ballast's own config carry, and derives per-service repository passwords

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 techgaud
 
 // Package daemon wires every Ballast package together into the long-running
 // backup daemon: it loads config, resolves secrets, builds the notifier, the
