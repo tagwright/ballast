@@ -20,6 +20,7 @@
 //	ballast snapshots [service]  list snapshots
 //	ballast restore <service>    restore a snapshot
 //	ballast backup <service>     force a backup now
+//	ballast verify <service>     prove a snapshot restores
 //
 // Every subcommand except "daemon" and "key" shares a small set of
 // collaborators (config, secret resolver, Docker runtime, restic engine)
@@ -83,6 +84,7 @@ run it; the other subcommands cover disaster recovery and one-off runs.`,
 	root.AddCommand(newSnapshotsCmd())
 	root.AddCommand(newRestoreCmd())
 	root.AddCommand(newBackupCmd(version))
+	root.AddCommand(newVerifyCmd(version))
 
 	return root
 }
