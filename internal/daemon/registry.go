@@ -81,6 +81,11 @@ func (r *registry) register(sched *schedule.Scheduler, deps orchestrator.Deps, s
 	if err != nil {
 		log.Error("daemon: schedule job failed", "service", spec.Service, "error", err)
 	}
+
+	// A service may also carry an optional local verify.schedule, registered as
+	// its own lower-priority job. Billet drives verify fleet-wide instead, so
+	// this is only ever added when the operator explicitly asked for it.
+	r.scheduleVerify(sched, deps, spec, log)
 }
 
 // unregisterContainer removes whatever service containerID owns, if any,
@@ -112,6 +117,8 @@ func (r *registry) unregisterContainer(sched *schedule.Scheduler, containerID st
 		return ""
 	}
 	sched.Remove(service)
+	// Drop the service's verify job too, if it had one (a no-op otherwise).
+	sched.Remove(verifyJobName(service))
 	return service
 }
 
