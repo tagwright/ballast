@@ -17,6 +17,7 @@ type BackupSpec struct {
 	Project       string // compose project, empty if the container is not a compose service
 	ContainerID   string
 	ContainerName string
+	Image         string // the discovered container's image reference, used as the default throwaway image for container/stream-restore verify
 
 	Destination    string // ballast.repo, defaults to config.DefaultDestination
 	RepoPath       string // ballast.repo.path, defaults to Service
@@ -56,11 +57,17 @@ type BackupSpec struct {
 	NotifyOnSuccess bool
 
 	// VerifyConfigured reports whether the service carries any verify.* label.
-	// It does not interpret that configuration (the verify command, a
-	// separate concern, does): its only job here is to be the opt-in trigger
-	// for the backup-time manifest, which costs a hash pass over the volume
-	// and so is never built for a service that has no verify configured.
+	// It is the opt-in trigger for the backup-time manifest, which costs a hash
+	// pass over the volume and so is never built for a service that has no
+	// verify configured. It mirrors Verify.Configured.
 	VerifyConfigured bool
+
+	// Verify is the service's fully resolved verify configuration, parsed from
+	// its verify.* labels. Its fields are only meaningful when
+	// Verify.Configured (equivalently VerifyConfigured) is true; the defaults
+	// (files mode, 10m timeout) are filled regardless so a reader can consult
+	// Mode and Timeout unconditionally.
+	Verify VerifySpec
 }
 
 // StreamSpec is one ballast.stream.<id> dump: a command run inside the

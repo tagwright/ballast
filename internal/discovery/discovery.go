@@ -69,6 +69,7 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 		Project:        c.Project,
 		ContainerID:    c.ID,
 		ContainerName:  c.Name,
+		Image:          c.Image,
 		Destination:    firstNonEmpty(norm["repo"], cfg.DefaultDestination),
 		RepoPath:       firstNonEmpty(norm["repo.path"], service),
 		PasswordSecret: norm["password-secret"],
@@ -88,7 +89,10 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	}
 	spec.Tags = splitCSV(norm["tags"])
 
-	spec.VerifyConfigured = hasVerifyConfig(norm)
+	if spec.Verify, err = parseVerify(norm); err != nil {
+		return nil, nil, err
+	}
+	spec.VerifyConfigured = spec.Verify.Configured
 
 	if spec.NotifySuppress, err = parseBool(norm, "notify.suppress", false); err != nil {
 		return nil, nil, err
@@ -123,18 +127,6 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	}
 
 	return spec, warnings, nil
-}
-
-// hasVerifyConfig reports whether norm carries any verify configuration: the
-// bare "verify" suffix or any "verify.<field>" suffix. It only detects
-// presence; the verify command owns the grammar of those labels.
-func hasVerifyConfig(norm map[string]string) bool {
-	for k := range norm {
-		if k == "verify" || strings.HasPrefix(k, "verify.") {
-			return true
-		}
-	}
-	return false
 }
 
 // resolveServiceName applies the service-identity precedence: ballast.name,
