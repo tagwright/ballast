@@ -10,8 +10,8 @@ import (
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
-// It defaults to the tree's current beta.
-var version = "00.01.00b1"
+// It defaults to the tree's current VERSION.
+var version = "00.02.00"
 
 func main() {
 	if err := cli.Execute(version); err != nil {
