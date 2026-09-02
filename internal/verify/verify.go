@@ -33,7 +33,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/tagwright/ballast/internal/discovery"
@@ -350,9 +352,31 @@ func (r *run) ctxReasonCode(err error, timeoutCode, fallback string) string {
 
 // --- teardown registration helpers ----------------------------------------
 
+// scratchDirPrefix names every verify's scratch directory, followed by the
+// verify id, so the orphan sweep can correlate a leftover scratch with the
+// throwaway objects that carry the same id.
+const scratchDirPrefix = "ballast-verify-"
+
+// scratchRoot is the parent directory every verify's scratch dir lives under. It
+// is deterministic and tied to the state dir so a crashed run's scratch (a copy
+// of restored production data) can be found and removed by a later run's orphan
+// sweep, rather than lingering under a random OS temp path no sweep knows to
+// look at. It falls back to the OS temp dir only when no state dir is configured
+// (the degenerate case where the record write is disabled too).
+func (r *run) scratchRoot() string {
+	if r.d.StateDir != "" {
+		return filepath.Join(r.d.StateDir, "verify-scratch")
+	}
+	return os.TempDir()
+}
+
 func (r *run) makeScratchDir() error {
-	dir, err := os.MkdirTemp("", "ballast-verify-*")
-	if err != nil {
+	root := r.scratchRoot()
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	dir := filepath.Join(root, scratchDirPrefix+r.v.VerifyID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	r.scratchDir = dir
@@ -400,6 +424,45 @@ func (r *run) sweepOrphans(ctx context.Context) {
 					r.log.Debug("verify: orphan network sweep", "network", n.ID, "error", err)
 				}
 			}
+		}
+	}
+	// A hard crash (SIGKILL) leaves the restored dump on disk because no teardown
+	// ran. Remove any scratch dir whose verify id no longer has a throwaway object,
+	// so a copy of restored production data never outlives the run that made it. A
+	// scratch whose throwaway is still present (a live verify, or an orphan still
+	// running that a controller's scoped-prefix sweep has yet to force-remove) is
+	// preserved, the same running-object correlation the container sweep trusts.
+	r.sweepOrphanScratch(ctx)
+}
+
+// sweepOrphanScratch removes leftover scratch directories under scratchRoot whose
+// verify id has no throwaway container still present. It is the recovery for a
+// SIGKILL between makeScratchDir and the deferred teardown: on every softer exit
+// teardownAll already removes the scratch.
+func (r *run) sweepOrphanScratch(ctx context.Context) {
+	root := r.scratchRoot()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return // no scratch root yet, nothing to sweep
+	}
+	live := map[string]bool{}
+	if conts, lerr := r.d.Runtime.List(ctx); lerr == nil {
+		for _, c := range conts {
+			if id, ok := c.Labels[labelKey]; ok {
+				live[id] = true
+			}
+		}
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), scratchDirPrefix) {
+			continue
+		}
+		vid := strings.TrimPrefix(e.Name(), scratchDirPrefix)
+		if live[vid] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, e.Name())); err != nil {
+			r.log.Debug("verify: orphan scratch sweep", "dir", e.Name(), "error", err)
 		}
 	}
 }
