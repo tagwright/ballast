@@ -114,6 +114,21 @@ func Build(roots []string, location string) (Handle, error) {
 	}, nil
 }
 
+// Load reads a manifest written by Build from location and returns its entries.
+// It is what a files-mode verify calls to obtain the ground truth it diffs a
+// restored tree against.
+func Load(location string) ([]Entry, error) {
+	data, err := os.ReadFile(location)
+	if err != nil {
+		return nil, fmt.Errorf("manifest: read %q: %w", location, err)
+	}
+	var doc document
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("manifest: parse %q: %w", location, err)
+	}
+	return doc.Entries, nil
+}
+
 // hashFile returns the lowercase hex SHA-256 of path's contents and its size
 // in bytes.
 func hashFile(path string) (string, uint64, error) {
