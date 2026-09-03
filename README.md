@@ -48,7 +48,9 @@ deploy time.
 Ballast runs as one container, alongside the services it backs up in the same
 compose file (or stack). It needs the container socket to discover and inspect
 services, the Docker volumes root to read what it backs up, and a secrets
-directory that SOPS fills in at deploy time. All three mounts are read-only:
+directory that SOPS fills in at deploy time. Those three are read-only. It also
+needs a writable, persistent state directory, and, for a local destination, the
+repository path it writes to:
 
 ```yaml
 services:
@@ -60,7 +62,18 @@ services:
       - /var/lib/docker/volumes:/var/lib/docker/volumes:ro
       - ./ballast.yml:/etc/ballast/ballast.yml:ro
       - /run/ballast/secrets:/run/ballast/secrets:ro
+      # State must OUTLIVE container recreation: the stable host identity, the
+      # ballast.run.v1 / ballast.verify.v1 records, and backup-time manifests
+      # all live here (state_dir, default /var/lib/ballast). Use a named volume.
+      - ballast-state:/var/lib/ballast
+      # For a LOCAL destination only: mount the host path its repos live on to
+      # match the `url:` of that destination in ballast.yml (e.g. url: /repos).
+      # Object-storage destinations (S3, R2, SFTP) need no such mount.
+      # - /srv/ballast/repos:/repos
     command: ["daemon", "--config", "/etc/ballast/ballast.yml"]
+
+volumes:
+  ballast-state:
 ```
 
 The `/var/lib/docker/volumes` mount matters: Ballast maps a named volume's
