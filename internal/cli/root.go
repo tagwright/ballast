@@ -70,13 +70,24 @@ through a pluggable engine (restic first). The daemon is the normal way to
 run it; the other subcommands cover disaster recovery and one-off runs.`,
 		Version:      version,
 		SilenceUsage: true,
+		// Resolve the config path once, before any subcommand runs, so a bare
+		// --config falls back to $BALLAST_CONFIG. This is what lets a
+		// `docker exec` into the daemon container (which inherits the
+		// container's environment, including BALLAST_CONFIG) reach the same
+		// ballast.yml the daemon uses, without repeating --config on every
+		// command. No subcommand defines its own PersistentPreRunE, so this one
+		// runs for all of them.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfgFile = resolveConfigPath(cfgFile)
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
 	root.SetVersionTemplate("ballast {{.Version}}\n")
 
-	root.PersistentFlags().StringVar(&cfgFile, "config", "", "path to ballast.yml (default: none, env-only operation)")
+	root.PersistentFlags().StringVar(&cfgFile, "config", "", "path to ballast.yml (default: $BALLAST_CONFIG, else none / env-only operation)")
 	root.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level: debug, info, warn, error")
 
 	root.AddCommand(newVersionCmd(version))
@@ -90,6 +101,17 @@ run it; the other subcommands cover disaster recovery and one-off runs.`,
 	root.AddCommand(newInventoryCmd())
 
 	return root
+}
+
+// resolveConfigPath picks the ballast.yml path to load: the explicit --config
+// flag value if given, otherwise the BALLAST_CONFIG environment variable, and
+// otherwise empty (env-only operation, unchanged). Factored out so the flag-vs-
+// env precedence is unit-testable without executing the whole command tree.
+func resolveConfigPath(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv("BALLAST_CONFIG")
 }
 
 // newVersionCmd prints the same "ballast <version>" line the pre-Cobra CLI

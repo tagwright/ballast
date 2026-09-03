@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -169,7 +170,19 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 func BuildRepo(spec *discovery.BackupSpec, cfg *config.Config, resolver secret.Resolver, master []byte) (engine.Repo, error) {
 	dest, ok := cfg.Destinations[spec.Destination]
 	if !ok {
-		return engine.Repo{}, fmt.Errorf("orchestrator: unknown destination %q", spec.Destination)
+		// No destinations at all almost always means the config never loaded
+		// (a CLI invocation with no --config and no BALLAST_CONFIG), not a real
+		// naming mistake. Say so, rather than the misleading "unknown
+		// destination", which reads as if the name were wrong.
+		if len(cfg.Destinations) == 0 {
+			return engine.Repo{}, fmt.Errorf("orchestrator: no destinations configured (service %q requested destination %q); pass --config or set BALLAST_CONFIG to point at your ballast.yml", spec.Service, spec.Destination)
+		}
+		names := make([]string, 0, len(cfg.Destinations))
+		for n := range cfg.Destinations {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return engine.Repo{}, fmt.Errorf("orchestrator: unknown destination %q (configured: %s)", spec.Destination, strings.Join(names, ", "))
 	}
 
 	env := make(map[string]string, len(dest.Env))
