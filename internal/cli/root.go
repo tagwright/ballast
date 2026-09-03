@@ -22,6 +22,7 @@
 //	ballast restore <service>    restore a snapshot
 //	ballast backup <service>     force a backup now
 //	ballast verify <service>     prove a snapshot restores
+//	ballast check <service>      check a repository's integrity
 //	ballast inventory            list the discovered service inventory
 //
 // Every subcommand except "daemon" and "key" shares a small set of
@@ -98,6 +99,7 @@ run it; the other subcommands cover disaster recovery and one-off runs.`,
 	root.AddCommand(newRestoreCmd())
 	root.AddCommand(newBackupCmd(version))
 	root.AddCommand(newVerifyCmd(version))
+	root.AddCommand(newCheckCmd(version))
 	root.AddCommand(newInventoryCmd())
 
 	return root

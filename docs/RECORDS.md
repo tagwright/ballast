@@ -1,8 +1,9 @@
 # Machine-readable records
 
-Ballast writes one JSON document per backup run (a `ballast.run.v1` record) and
-one per verify (a `ballast.verify.v1` record). They are the source of truth
-about what a run or a verify did, meant to be read by machines, not just tailed
+Ballast writes one JSON document per backup run (a `ballast.run.v1` record),
+one per verify (a `ballast.verify.v1` record), and one per repository integrity
+check (a `ballast.check.v1` record). They are the source of truth about what a
+run, a verify, or a check did, meant to be read by machines, not just tailed
 in a log. The compliance tooling in the wider tagwright suite consumes these
 records, but the format stands on its own and needs nothing external to read.
 
@@ -111,6 +112,9 @@ billet-evidence/golden/ballast/run-fail.json
 billet-evidence/golden/ballast/verify-pass.json
 billet-evidence/golden/ballast/verify-fail.json
 billet-evidence/golden/ballast/verify-inconclusive.json
+billet-evidence/schema/ballast/check.v1.json
+billet-evidence/golden/ballast/check-pass.json
+billet-evidence/golden/ballast/check-fail.json
 ```
 
 `internal/record` in this repository is the Go mirror of those schemas, and its
@@ -193,6 +197,65 @@ closest-match substitute when the popular template is missing) is claim 1 of
 an active patent, US10678656B2 (Kyndryl, expires 2033-06-01). See the code
 comment at the top of `internal/verify/verify.go` and the wiki page
 billet/Patent and Competitor Follow-up for the full write-up.
+
+## The check record: ballast.check.v1
+
+`ballast check <service>` runs an integrity check on the service's repository
+and writes one `ballast.check.v1` document per invocation, the machine-readable
+evidence that the repository is internally consistent. The daemon writes the
+same record on its maintenance schedule (a metadata check), closing the gap
+where a scheduled check used to leave only a log line. It goes to:
+
+```
+<state_dir>/checks/<service>/<check_id>.json
+```
+
+and, with `ballast check <service> --json`, to stdout as well (stdout carries
+only the record in that mode). `check_id` is a ULID, like `run_id`. The record
+keys its evidence on the same stable `host_id`, so a check is refused (CLI) or
+its record write is skipped (daemon) if that identity cannot be resolved.
+
+**A check is not a restore test.** An integrity check proves the repository is
+internally consistent; `ballast verify` is the separate evidence that a
+snapshot actually restores and runs. These are SEPARATE evidence downstream: a
+check record must never be folded into or counted as verify evidence. A passing
+integrity check does not prove restorability, and a metadata check does not even
+prove the stored bytes are intact.
+
+Field by field (see the schema for exact types and the null rules):
+
+- `record` is the constant `ballast.check.v1`.
+- `check_id`, `host_id`, `service`, `runtime`, `runtime_ref`, `repo_id`,
+  `trigger`, `requested_by`, `engine`, `ballast_version` mean exactly what they
+  do on a run or verify record. `ballast check --requested-by <who>` sets
+  `trigger` to `remote` and `requested_by` to `<who>`; without it the local CLI
+  path records `manual`, and the daemon's scheduled check records `schedule`,
+  each with a null `requested_by`.
+- `method` is the critical distinction, and it must not be lost or blurred:
+  - `metadata` is `restic check`: it walks the repository's structure and index
+    and confirms every referenced pack and blob is present and internally
+    consistent, but it does NOT read the pack data. It is the cheap, run-often
+    claim, and it is the weaker one. The daemon's scheduled check is always
+    `metadata`.
+  - `read-data` is `restic check --read-data` (the CLI's `--read-data` flag): it
+    additionally reads every pack and re-hashes its data, catching bit rot and
+    silent backend corruption the metadata pass cannot. It reads the whole
+    repository and is the stronger, slower claim.
+
+  A compliance report must not present a `metadata` check as if it were a
+  `read-data` check: the former proves internal consistency only, the latter
+  proves the bytes still hash, and neither proves anything restores.
+- `started_at`, `finished_at`, `duration_ms` time the check.
+- `result` is `pass`, `fail`, or `inconclusive`. `reason_code` is a closed
+  classification (`check_errors`, `repo_unreachable`, `cancelled`, `other`) and
+  `reason` its bounded human text (the restic error, capped at 4096 bytes): a
+  pass carries neither, a non-pass carries both. A check that the engine reports
+  errors on is a `fail` with `check_errors`; a cancelled check (parent context)
+  is `inconclusive` with `cancelled`, its verdict not known rather than proven
+  bad.
+
+The check result is reflected in the CLI exit status (0 for pass, non-zero for
+fail or inconclusive), the same as verify.
 
 ## The inventory record: ballast.inventory.v1
 
