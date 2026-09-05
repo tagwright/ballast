@@ -52,3 +52,5 @@
 /test/integration/repos-podman/
 /test/integration/restore-podman/
 /test/integration/secrets-podman/
+/CLAUDE.md
+/CHARTER.md
