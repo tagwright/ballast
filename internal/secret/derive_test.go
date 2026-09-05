@@ -8,19 +8,21 @@ import "testing"
 // These golden values pin the FROZEN v1 HKDF construction described in the
 // CONTRACT block at the top of derive.go: SHA-256, the fixed salt
 // "tagwright.ballast.repo-key.v1", info "service:<name>", a 32-byte output,
-// base64.RawURLEncoding. They were computed once with the exact code in this
-// package (see the derive.go doc comment) and hardcoded here as a tripwire.
+// base64.RawURLEncoding. goldenMaster is a SYNTHETIC, non-secret test master:
+// a readable placeholder string, deliberately not a real-looking key. The
+// goldenVector* values are its derived outputs, computed once with the exact
+// code in this package and hardcoded here as a regression tripwire.
 //
 // If this test ever starts failing, do NOT "fix" it by updating the
 // constants to match new output: that means the frozen contract changed,
 // which orphans every repository already built on the old derivation.
 // Diagnose why the derivation moved, not why the test is "wrong".
 const (
-	goldenMaster = "rL++g+jDsn23gHLZYeBgQonk1Q2YPi6PHwkNNAwT8qs="
+	goldenMaster = "synthetic-test-master-for-hkdf-golden-vectors-01"
 
-	goldenPasswordPhotosDB    = "3V6gvuvT3APICuwUbwPFVvydsSKiSBMlSS5LmQdnxzo"
-	goldenPasswordPhotosMedia = "Lv7ulOYYZ5jE2wJj9TfCARCfUnigadEaefF1AwRT7Ks"
-	goldenPasswordTimeTracker = "9JS73Q1o2Ts2cU2zYPgFWsKOmoiKvgW67GTBE2dETU4"
+	goldenVectorPhotosDB    = "O-awKj43w9PfdLSnfpAV9XX1H8wd6U0trG93ljBsnGE"
+	goldenVectorPhotosMedia = "2uHqHhAmEi54WY0o-UFWOxmnGFLsj5arj_C4YsE4sXE"
+	goldenVectorTimeTracker = "lZhPsZQK4PtN-ThZOwXdhiH4-BdhHnM3kJOcQuYE7eY"
 )
 
 // TestDeriveRepoPasswordGoldenValues pins DeriveRepoPassword's output for a
@@ -35,9 +37,9 @@ func TestDeriveRepoPasswordGoldenValues(t *testing.T) {
 		service string
 		want    string
 	}{
-		{"photos-db", goldenPasswordPhotosDB},
-		{"photos-media", goldenPasswordPhotosMedia},
-		{"timetracker", goldenPasswordTimeTracker},
+		{"photos-db", goldenVectorPhotosDB},
+		{"photos-media", goldenVectorPhotosMedia},
+		{"timetracker", goldenVectorTimeTracker},
 	}
 
 	for _, c := range cases {
@@ -110,9 +112,10 @@ func TestLoadMasterRejectsShortMaster(t *testing.T) {
 }
 
 // TestLoadMasterAcceptsMinimumLength proves the other side of the same
-// boundary: a master at or above minMasterKeyBytes, such as the standard
-// `openssl rand -base64 32` output, is accepted and returned unchanged
-// (LoadMaster treats it as an opaque byte string, not base64-decoded).
+// boundary: a master at or above minMasterKeyBytes is accepted and returned
+// unchanged (LoadMaster treats it as an opaque byte string, not base64-decoded).
+// A real deployment's master is `openssl rand -base64 32`; this test uses the
+// synthetic goldenMaster, which is comfortably over the floor.
 func TestLoadMasterAcceptsMinimumLength(t *testing.T) {
 	resolve := func(name string) (string, error) {
 		return goldenMaster, nil
