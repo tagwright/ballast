@@ -86,6 +86,20 @@ func (r *Restic) EnsureRepo(ctx context.Context, repo Repo) error {
 		return fmt.Errorf("engine: check repository: %w", err)
 	}
 
+	// The repository is uninitialized or empty. Auto-initializing is correct
+	// for a genuinely new service's first backup, but for a service that has
+	// backed up before it would silently paper over a destination whose
+	// backups are gone (the repo dir wiped, or the config now pointing at a
+	// fresh empty location), destroying the signal that the prior backups
+	// vanished. Give the caller the final say on whether this init is allowed:
+	// a non-nil GuardInit that returns an error refuses it, surfaced as this
+	// method's failure. A nil guard, or a nil return, initializes as before.
+	if repo.GuardInit != nil {
+		if err := repo.GuardInit(); err != nil {
+			return err
+		}
+	}
+
 	if _, err := r.run(ctx, repo, nil, "init"); err != nil {
 		return fmt.Errorf("engine: init repository: %w", err)
 	}

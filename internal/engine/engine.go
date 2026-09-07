@@ -77,6 +77,24 @@ type Repo struct {
 	// Env carries backend credentials (e.g. AWS_ACCESS_KEY_ID) into the child
 	// process environment only. Resolved from named secrets, never from labels.
 	Env map[string]string
+
+	// GuardInit, when non-nil, is consulted by EnsureRepo at the single moment
+	// it has found the repository uninitialized or empty and is about to create
+	// a fresh one. A non-nil return aborts that auto-initialization and becomes
+	// EnsureRepo's error; a nil return (or a nil GuardInit) initializes exactly
+	// as before. It is never called for a healthy repository, only on the
+	// would-init path.
+	//
+	// This is how Ballast turns a silent auto-init into a loud failure for a
+	// destination that has vanished: the orchestrator supplies a guard that
+	// refuses the init when the service has backed up successfully before, so a
+	// wiped or misconfigured destination surfaces as a failed run instead of
+	// being papered over with an empty new repository (which would destroy the
+	// "your backups are gone" signal). Leaving it nil preserves the original
+	// always-init behavior, so every existing caller and test is unchanged. The
+	// engine stays ignorant of what the guard consults; the decision lives with
+	// the caller.
+	GuardInit func() error
 }
 
 // BackupRequest is a single snapshot to write.

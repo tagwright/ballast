@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // RecordType is the discriminator every run record carries.
@@ -119,6 +120,62 @@ func Marshal(r *Run) ([]byte, error) {
 		return nil, fmt.Errorf("record: marshal: %w", err)
 	}
 	return append(data, '\n'), nil
+}
+
+// CountSuccessfulRuns reports how many successful run records exist for service
+// under stateDir, reading exactly the runs/<service>/ tree Write persists into.
+// A run counts as successful when its record's exit is 0, which the run-record
+// builder sets only for a run that produced and kept a snapshot.
+//
+// It is ballast's "has this service ever backed up before" signal, used to tell
+// a genuinely new service (which should auto-initialize its repository on its
+// first backup) apart from a service whose destination has vanished (which must
+// fail loudly rather than be silently re-initialized). That distinction is only
+// as reliable as stateDir's persistence: these records must live on a durable
+// mount that survives a container restart and recreation, or a
+// previously-backed-up service would look new and defeat the safeguard. In the
+// deployment stateDir is /var/lib/ballast, backed by the persistent
+// ballast-state named volume for exactly this reason.
+//
+// A missing runs/<service>/ directory means the service has no history and
+// returns 0 with no error (the ordinary new-service case). A file that cannot
+// be read or parsed as a run record is skipped rather than failing the count,
+// so one malformed record cannot wedge the guard; a directory that exists but
+// cannot be listed is a real error, returned to the caller to handle.
+func CountSuccessfulRuns(stateDir, service string) (int, error) {
+	dir := filepath.Join(stateDir, "runs", service)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("record: read runs dir %q: %w", dir, err)
+	}
+
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		// Decode only the exit field: a partially-written or
+		// schema-drifted record should still be classifiable by the one
+		// field this signal depends on, without coupling the count to the
+		// full record shape.
+		var rec struct {
+			Exit int `json:"exit"`
+		}
+		if err := json.Unmarshal(data, &rec); err != nil {
+			continue
+		}
+		if rec.Exit == 0 {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // Write persists r under stateDir/runs/<service>/<run_id>.json and returns the

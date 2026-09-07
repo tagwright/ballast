@@ -25,6 +25,7 @@ import (
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
+	"github.com/tagwright/ballast/internal/record"
 	"github.com/tagwright/ballast/internal/secret"
 	"github.com/tagwright/ballast/internal/ulid"
 	"github.com/tagwright/core/runtime"
@@ -127,6 +128,13 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 	}
 
 	if runErr == nil {
+		// Guard the engine's auto-init against a vanished destination: if this
+		// service has backed up successfully before, a now-uninitialized
+		// repository is a regression to surface, not a first backup to create.
+		// The guard is consulted only on the would-init path, inside EnsureRepo.
+		service := spec.Service
+		stateDir := d.StateDir
+		repo.GuardInit = func() error { return guardAutoInit(stateDir, service) }
 		if err := d.Engine.EnsureRepo(ctx, repo); err != nil {
 			runErr = fmt.Errorf("orchestrator: ensure repo: %w", err)
 		}
@@ -322,6 +330,47 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 	if err := d.Notifier.Report(nctx, h); err != nil {
 		log.Warn("orchestrator: telemetry report failed", "service", spec.Service, "error", err)
 	}
+}
+
+// guardAutoInit decides whether the engine may auto-initialize a service's
+// repository it has found uninitialized or empty. It is Ballast's regression
+// guard against a vanished destination.
+//
+// Auto-init is correct for a genuinely new service's first backup, but for a
+// service that has backed up successfully before it would silently create a
+// fresh empty repository over a destination whose backups are gone (the repo
+// dir wiped, or the destination now pointing at a fresh empty location),
+// destroying the "your backups are gone" signal. So: prior successful runs
+// recorded for the service plus a now-uninitialized destination is treated as a
+// regression and refused with an error, which rides the normal failure path
+// (reportOutcome -> beacon.LevelError, "Backup FAILED: <service>"). No prior
+// successful runs means a genuinely new service, and it returns nil to
+// initialize as before.
+//
+// The signal is the per-run records under stateDir/runs/<service>/, so it is
+// only as reliable as stateDir's persistence: in the deployment stateDir is a
+// durable named volume (ballast-state) that outlives container recreation, for
+// exactly this reason. With no stateDir configured there is no history to
+// consult, so it preserves the original always-init behavior. A catastrophe
+// that wipes BOTH the destination AND stateDir cannot be caught by a
+// state-based signal; that is an accepted, documented gap of this approach.
+//
+// If the service's run-record state exists but cannot be read, it fails closed
+// (refuses the init): that state only exists once the service has run before,
+// so a loud, fixable error is safer than silently re-initializing over what may
+// be lost backups.
+func guardAutoInit(stateDir, service string) error {
+	if stateDir == "" {
+		return nil
+	}
+	n, err := record.CountSuccessfulRuns(stateDir, service)
+	if err != nil {
+		return fmt.Errorf("destination for %q is missing or empty and its prior-run history under the state directory could not be read (%v); refusing to silently re-initialize", service, err)
+	}
+	if n > 0 {
+		return fmt.Errorf("destination for %q is missing or empty but %d prior successful backup(s) are recorded; refusing to silently re-initialize (investigate the destination: its backups appear to have vanished; if the repository was intentionally moved or reset, clear this service's run records under the state directory to allow a fresh initialize)", service, n)
+	}
+	return nil
 }
 
 // combine joins two errors, dropping whichever is nil, so callers that
