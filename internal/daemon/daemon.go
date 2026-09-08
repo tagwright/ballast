@@ -15,6 +15,9 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
+
+	"github.com/tagwright/beacon"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/engine"
@@ -29,10 +32,39 @@ import (
 // cfg.Socket nor DOCKER_HOST names a socket path.
 const defaultDockerSocket = "/var/run/docker.sock"
 
-// Run loads configPath, wires up every collaborator, runs an initial
-// discovery pass, and then drives the scheduler and the runtime's lifecycle
-// watch until ctx is cancelled. Signal handling belongs to the caller: Run
-// itself only ever reacts to ctx.
+// Deps carries run's collaborators. It is the testable seam (task #549): Run
+// builds Deps from the config file and the environment, then hands off to run;
+// a wiring test builds Deps directly with fakes (a core/runtime/runtimetest
+// Runtime, a fake engine, a fake clock) and calls run to drive the real
+// discover/watch/schedule/backup path with an injected failure, asserting it
+// surfaces rather than passing silently.
+//
+// Everything here is a collaborator the production path constructs from config
+// and a test substitutes: the runtime, the backup engine (the "backend-exec"),
+// the notifier, and the scheduler clock. The remaining fields (Config, the
+// resolved Master and HostID, the record StateDir, Version) are the resolved
+// configuration run threads through to the orchestrator; a test sets them
+// directly.
+type Deps struct {
+	Runtime  runtime.Runtime
+	Engine   engine.Engine
+	Notifier *beacon.Beacon
+	Clock    func() time.Time // scheduler clock; nil defaults to time.Now
+
+	Config   *config.Config
+	Logger   *slog.Logger
+	Version  string
+	Resolver secret.Resolver
+	Master   []byte
+	HostID   string
+	StateDir string
+}
+
+// Run loads configPath, wires up every collaborator, and hands off to run,
+// which drives the scheduler and the runtime's lifecycle watch until ctx is
+// cancelled. Signal handling belongs to the caller: Run and run only ever
+// react to ctx. Run is the production entry point; run is the seam a wiring
+// test drives with fakes.
 func Run(ctx context.Context, configPath, version string, logger *slog.Logger) error {
 	if logger == nil {
 		logger = slog.Default()
@@ -45,8 +77,8 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 
 	// The stable host identity gates run-record writing: without it a record
 	// would carry no valid host_id, so if it cannot be resolved recording is
-	// left off (recordStateDir stays empty) rather than writing invalid
-	// records. Backups themselves are unaffected.
+	// left off (StateDir stays empty) rather than writing invalid records.
+	// Backups themselves are unaffected.
 	hostID, herr := hostid.LoadOrCreate(cfg.StateDir)
 	recordStateDir := cfg.StateDir
 	if herr != nil {
@@ -78,9 +110,36 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 		}
 	}()
 
-	eng := engine.NewRestic("")
+	return run(ctx, Deps{
+		Runtime:  rt,
+		Engine:   engine.NewRestic(""),
+		Notifier: notifier,
+		Clock:    time.Now,
+		Config:   cfg,
+		Logger:   logger,
+		Version:  version,
+		Resolver: resolver,
+		Master:   master,
+		HostID:   hostID,
+		StateDir: recordStateDir,
+	})
+}
 
-	schedCfg, err := schedulerConfig(cfg)
+// run is the daemon's production loop, driven through the injectable Deps seam.
+// It builds the scheduler (on d.Clock), runs an initial discovery pass, starts
+// the lifecycle watch, and drives the scheduler until ctx is cancelled. It does
+// not own d.Runtime's lifecycle: the caller that built the runtime closes it.
+func run(ctx context.Context, d Deps) error {
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	clock := d.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+
+	schedCfg, err := schedulerConfig(d.Config)
 	if err != nil {
 		return fmt.Errorf("daemon: %w", err)
 	}
@@ -88,24 +147,25 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 	if err != nil {
 		return fmt.Errorf("daemon: build scheduler: %w", err)
 	}
+	sched.SetClock(clock)
 
 	deps := orchestrator.Deps{
-		Runtime:  rt,
-		Engine:   eng,
-		Config:   cfg,
-		Resolver: resolver,
-		Master:   master,
-		Notifier: notifier,
+		Runtime:  d.Runtime,
+		Engine:   d.Engine,
+		Config:   d.Config,
+		Resolver: d.Resolver,
+		Master:   d.Master,
+		Notifier: d.Notifier,
 		Logger:   logger,
-		StateDir: recordStateDir,
-		HostID:   hostID,
-		Version:  version,
+		StateDir: d.StateDir,
+		HostID:   d.HostID,
+		Version:  d.Version,
 		Trigger:  "schedule",
 	}
 
 	reg := newRegistry()
 
-	if err := discoverAll(ctx, rt, cfg, reg, sched, deps, logger, notifier); err != nil {
+	if err := discoverAll(ctx, d.Runtime, d.Config, reg, sched, deps, logger, d.Notifier); err != nil {
 		return fmt.Errorf("daemon: initial discovery: %w", err)
 	}
 
@@ -114,7 +174,7 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
-		watchLoop(ctx, rt, cfg, reg, sched, deps, logger, notifier)
+		watchLoop(ctx, d.Runtime, d.Config, reg, sched, deps, logger, d.Notifier)
 	}()
 
 	sched.Run(ctx)
