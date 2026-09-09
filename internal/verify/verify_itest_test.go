@@ -105,7 +105,7 @@ func TestLiveStreamRestorePostgres(t *testing.T) {
 			Restore:    "psql -v ON_ERROR_STOP=1 -U postgres",
 			Ready:      "pg_isready -U postgres",
 			Probe:      "psql -U postgres -tAc 'select count(*) from users'",
-			Expect:     "^[1-9][0-9]*$",
+			Expect:     "re:^[1-9][0-9]*$",
 			User:       "postgres",
 			Env: map[string]string{
 				"POSTGRES_PASSWORD":         "verify",

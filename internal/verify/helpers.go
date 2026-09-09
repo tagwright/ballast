@@ -144,7 +144,19 @@ func remainingTimeout(ctx context.Context) time.Duration {
 // otherwise, so a literal that happens not to be valid regex still works.
 func expectMatches(expect, stdout string) bool {
 	s := strings.TrimSpace(stdout)
-	if re, err := regexp.Compile(expect); err == nil {
+	// #519: regex is opt-in via a "re:" prefix; a bare expect is a LITERAL
+	// substring. The old "try to compile expect as a regex, else substring"
+	// silently gave regex meaning to any expect that happened to be a valid
+	// regex (almost all strings are), so a literal-intended expect like "1.0"
+	// matched "1X0" (. = any char) and a verify that should FAIL was attested
+	// PASS. Defaulting to literal removes that false-pass; an explicit re:
+	// that does not compile matches nothing (fail closed) rather than falling
+	// back to a substring that could accidentally match.
+	if pattern, ok := strings.CutPrefix(expect, "re:"); ok {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return false
+		}
 		return re.MatchString(s)
 	}
 	return strings.Contains(s, expect)

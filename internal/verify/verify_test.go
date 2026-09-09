@@ -184,7 +184,7 @@ func streamSpec(service string) *discovery.BackupSpec {
 		Restore:    "psql --set ON_ERROR_STOP=1 -U app -d app",
 		Ready:      "pg_isready -U app",
 		Probe:      "psql -tAc 'select count(*) from users'",
-		Expect:     "^[1-9][0-9]*$",
+		Expect:     "re:^[1-9][0-9]*$",
 		Env:        map[string]string{"POSTGRES_PASSWORD": "boot"},
 	})
 }
@@ -303,7 +303,7 @@ func TestContainerModePass(t *testing.T) {
 		DataEngine: "postgres",
 		Ready:      "pg_isready -U app",
 		Probe:      "psql -tAc 'select count(*) from users'",
-		Expect:     "^[1-9][0-9]*$",
+		Expect:     "re:^[1-9][0-9]*$",
 		Env:        map[string]string{"POSTGRES_PASSWORD": "boot"},
 	})
 
