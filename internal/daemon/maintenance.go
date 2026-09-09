@@ -5,7 +5,10 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+
+	"github.com/tagwright/beacon"
 
 	"github.com/tagwright/ballast/internal/check"
 	"github.com/tagwright/ballast/internal/discovery"
@@ -86,6 +89,8 @@ func runCheckOne(ctx context.Context, spec *discovery.BackupSpec, deps orchestra
 	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver, deps.Master)
 	if err != nil {
 		log.Error("daemon: maintenance failed", "action", "check", "service", spec.Service, "error", err)
+		notify(deps.Notifier, beacon.LevelError, "Ballast: integrity check failed",
+			fmt.Sprintf("scheduled check for %s failed: %v", spec.Service, err))
 		return
 	}
 
@@ -114,6 +119,8 @@ func runCheckOne(ctx context.Context, spec *discovery.BackupSpec, deps orchestra
 			reason = *c.Reason
 		}
 		log.Error("daemon: maintenance failed", "action", "check", "service", spec.Service, "error", reason)
+		notify(deps.Notifier, beacon.LevelError, "Ballast: integrity check failed",
+			fmt.Sprintf("scheduled check for %s failed: %s", spec.Service, reason))
 	}
 
 	// Write the evidence when a state dir and a stable host identity are both
@@ -142,6 +149,8 @@ func runMaintenance(ctx context.Context, action string, reg *registry, deps orch
 
 		if err := runMaintenanceOne(ctx, action, spec, deps, log, do); err != nil {
 			log.Error("daemon: maintenance failed", "action", action, "service", spec.Service, "error", err)
+			notify(deps.Notifier, beacon.LevelError, "Ballast: maintenance failed",
+				fmt.Sprintf("scheduled %s for %s failed: %v", action, spec.Service, err))
 		} else {
 			log.Info("daemon: maintenance completed", "action", action, "service", spec.Service)
 		}
