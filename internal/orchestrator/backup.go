@@ -24,7 +24,7 @@ import (
 // themselves succeeded: the inner closure's defer is scoped tightly around
 // stop-and-backup for exactly that reason.
 func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine.Repo, d Deps, log *slog.Logger, out *runOutcome) error {
-	backupErr := func() error {
+	backupErr := func() (stepErr error) {
 		if spec.Stop {
 			if err := d.Runtime.Stop(ctx, spec.ContainerID, defaultStopTimeoutSeconds); err != nil {
 				return fmt.Errorf("stop container: %w", err)
@@ -33,7 +33,13 @@ func runBackupSteps(ctx context.Context, spec *discovery.BackupSpec, repo engine
 			defer func() {
 				startCtx := context.WithoutCancel(ctx)
 				if err := d.Runtime.Start(startCtx, spec.ContainerID); err != nil {
+					// A failed restart is a loud failure, not a silent success:
+					// the container ballast stopped for a consistent backup is
+					// still down, so fold it into the run outcome (exit != 0,
+					// error recorded) instead of only logging it. Combined with
+					// any backup error above so both surface.
 					log.Error("orchestrator: start container after backup", "service", spec.Service, "error", err)
+					stepErr = combine(stepErr, fmt.Errorf("restart container after backup: %w", err))
 				}
 			}()
 		}
