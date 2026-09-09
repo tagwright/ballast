@@ -69,6 +69,16 @@ type BackupSpec struct {
 	// (files mode, 10m timeout) are filled regardless so a reader can consult
 	// Mode and Timeout unconditionally.
 	Verify VerifySpec
+
+	// UnknownSuffixes lists any ballast.*/tagwright.backup.* label suffixes on
+	// the container that the grammar does not recognize (a typo like
+	// retenton.last, or a label from a newer ballast version). It is a
+	// diagnostic, not backup configuration: the service is still discovered and
+	// backed up under its recognized labels, but the daemon raises a loud alert
+	// naming these so a silent misconfiguration (an operator who believes they
+	// set a policy the label never applied) does not go unnoticed. Sorted;
+	// empty when every suffix is recognized.
+	UnknownSuffixes []string
 }
 
 // StreamSpec is one ballast.stream.<id> dump: a command run inside the

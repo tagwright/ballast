@@ -8,9 +8,19 @@ from the label grammar the code actually implements
 
 Every label below is written with the `ballast.` prefix. `tagwright.backup.`
 is accepted as an identical alias for every one of them: `ballast.repo` and
-`tagwright.backup.repo` mean exactly the same thing. `backup.*` (no
-namespace) is **not** recognized and is silently ignored, same as any other
-unrecognized label.
+`tagwright.backup.repo` mean exactly the same thing. A label under any other
+namespace (`backup.*`, `com.example.*`, anything that is neither `ballast.`
+nor `tagwright.backup.`) is not Ballast's and is silently ignored.
+
+An unrecognized *suffix* under Ballast's own namespace is different, because
+it is almost always a typo (`ballast.retenton.last` for
+`ballast.retention.last`) or a label from a newer Ballast version. Ballast
+does **not** silently ignore it and does **not** skip the service over it.
+The daemon raises a loud alert (a Warning-level notification and a log line)
+naming the unrecognized suffix, and the service is still backed up under its
+recognized labels. The alert exists so an operator who believes they set a
+policy never learns, months later, that the mistyped label did nothing; the
+backup keeps running so a typo never silently costs a working backup.
 
 You can mix the two prefixes on the same service, but not on the same key:
 setting both `ballast.repo` and `tagwright.backup.repo` to the *same* value

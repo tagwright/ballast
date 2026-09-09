@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 
 	"github.com/tagwright/beacon"
 
@@ -50,6 +52,22 @@ func discoverOne(c runtime.Container, cfg *config.Config, reg *registry, sched *
 	}
 	if spec == nil {
 		return // not opted in; the normal, silent case
+	}
+
+	// An unrecognized label suffix (a typo, or a label from a newer ballast) is
+	// surfaced loudly but never stops the backup: the service is still
+	// registered and backs up under its recognized labels. This is the honest
+	// contract (docs/LABELS.md) that replaced silent-ignore, so an operator who
+	// set a label that never applied hears about it.
+	if len(spec.UnknownSuffixes) > 0 {
+		quoted := make([]string, len(spec.UnknownSuffixes))
+		for i, s := range spec.UnknownSuffixes {
+			quoted[i] = strconv.Quote(s)
+		}
+		joined := strings.Join(quoted, ", ")
+		log.Warn("daemon: unrecognized ballast label suffix", "container", c.Name, "service", spec.Service, "suffixes", joined)
+		notify(notifier, beacon.LevelWarning, "Ballast: unrecognized label suffix",
+			fmt.Sprintf("service %s: unrecognized ballast label suffix(es) %s (a typo, or from a newer ballast version); the service is still being backed up, but these labels are not applied. See docs/LABELS.md for the accepted labels.", spec.Service, joined))
 	}
 
 	reg.register(sched, deps, spec, log, notifier)

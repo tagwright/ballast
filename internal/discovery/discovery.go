@@ -95,6 +95,13 @@ func Discover(c runtime.Container, cfg *config.Config) (*BackupSpec, []string, e
 	}
 	spec.VerifyConfigured = spec.Verify.Configured
 
+	// Record any unrecognized suffix under the namespace (a typo, or a label
+	// from a newer ballast). This never stops discovery: the service still
+	// backs up under its recognized labels. The daemon raises a loud alert so
+	// the operator hears that a label they set was not applied, rather than the
+	// old behavior of silently ignoring it.
+	spec.UnknownSuffixes = unknownSuffixes(norm)
+
 	if spec.NotifySuppress, err = parseBool(norm, "notify.suppress", false); err != nil {
 		return nil, nil, err
 	}
