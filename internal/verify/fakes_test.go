@@ -70,6 +70,19 @@ type fakeRuntime struct {
 	pullErr   error
 	execs     []execResult
 
+	// Provisioner fault knobs (zero value injects nothing), added for #680 so a
+	// wiring test can force a create or a teardown-remove to fail and assert the
+	// failure surfaces rather than being swallowed. A failed remove is NOT
+	// recorded as removed, so leaked() reflects the object still being present.
+	createNetErr, createVolErr, createContErr error
+	removeNetErr, removeVolErr, removeContErr error
+
+	// inspectPresent makes Inspect report a container still present (rather than
+	// the default "no such container"), so the idempotent container teardown does
+	// not treat a failed RemoveContainer as "already gone" and correctly surfaces
+	// the removal failure.
+	inspectPresent bool
+
 	createdNets, createdVols, createdConts []string
 	removedNets, removedVols, removedConts []string
 }
@@ -78,8 +91,16 @@ func (f *fakeRuntime) List(context.Context) ([]runtime.Container, error) {
 	return []runtime.Container{f.container}, nil
 }
 func (f *fakeRuntime) Inspect(_ context.Context, id string) (runtime.Container, error) {
-	// Used only by the idempotent teardown when a remove errors; the fake never
-	// errors on remove, so a "gone" answer here is safe.
+	// Used by the idempotent container teardown when a remove errors: a "gone"
+	// answer lets it treat the container as already removed. inspectPresent makes
+	// it report the container as still present, so a genuine RemoveContainer
+	// failure is not mistaken for an already-gone container and surfaces.
+	f.mu.Lock()
+	present := f.inspectPresent
+	f.mu.Unlock()
+	if present {
+		return runtime.Container{ID: id, Name: id}, nil
+	}
 	return runtime.Container{}, fmt.Errorf("no such container %s", id)
 }
 func (f *fakeRuntime) Watch(context.Context) (<-chan runtime.Event, <-chan error) { return nil, nil }
@@ -130,30 +151,45 @@ func (f *fakeRuntime) PullImage(context.Context, string) error { return f.pullEr
 func (f *fakeRuntime) CreateNetwork(_ context.Context, spec runtime.NetworkSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createNetErr != nil {
+		return "", f.createNetErr
+	}
 	f.createdNets = append(f.createdNets, spec.Name)
 	return spec.Name, nil
 }
 func (f *fakeRuntime) RemoveNetwork(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.removeNetErr != nil {
+		return f.removeNetErr
+	}
 	f.removedNets = append(f.removedNets, id)
 	return nil
 }
 func (f *fakeRuntime) CreateVolume(_ context.Context, spec runtime.VolumeSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createVolErr != nil {
+		return "", f.createVolErr
+	}
 	f.createdVols = append(f.createdVols, spec.Name)
 	return spec.Name, nil
 }
 func (f *fakeRuntime) RemoveVolume(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.removeVolErr != nil {
+		return f.removeVolErr
+	}
 	f.removedVols = append(f.removedVols, name)
 	return nil
 }
 func (f *fakeRuntime) CreateContainer(_ context.Context, spec runtime.ContainerSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createContErr != nil {
+		return "", f.createContErr
+	}
 	id := spec.Name
 	f.createdConts = append(f.createdConts, id)
 	return id, nil
@@ -161,6 +197,9 @@ func (f *fakeRuntime) CreateContainer(_ context.Context, spec runtime.ContainerS
 func (f *fakeRuntime) RemoveContainer(_ context.Context, id string, _ bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.removeContErr != nil {
+		return f.removeContErr
+	}
 	f.removedConts = append(f.removedConts, id)
 	return nil
 }
