@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/discovery"
@@ -33,22 +33,22 @@ import (
 // a test can assert a maintenance failure reached the operator-facing notifier.
 type maintCapture struct {
 	mu   sync.Mutex
-	sent []beacon.Notification
+	sent []courier.Notification
 }
 
 func (c *maintCapture) Name() string { return "ballast-maint-capture" }
 
-func (c *maintCapture) Send(_ context.Context, n beacon.Notification) error {
+func (c *maintCapture) Send(_ context.Context, n courier.Notification) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.sent = append(c.sent, n)
 	return nil
 }
 
-func (c *maintCapture) notifications() []beacon.Notification {
+func (c *maintCapture) notifications() []courier.Notification {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]beacon.Notification(nil), c.sent...)
+	return append([]courier.Notification(nil), c.sent...)
 }
 
 // maintCaptures lets the globally registered backend factory hand the right
@@ -61,7 +61,7 @@ var (
 )
 
 func init() {
-	beacon.RegisterBackend("ballast-maint-capture", func(settings map[string]string, _ beacon.SecretResolver) (beacon.Backend, error) {
+	courier.RegisterBackend("ballast-maint-capture", func(settings map[string]string, _ courier.SecretResolver) (courier.Backend, error) {
 		maintCaptureMu.Lock()
 		defer maintCaptureMu.Unlock()
 		c := maintCaptures[settings["id"]]
@@ -75,7 +75,7 @@ func init() {
 
 // captureNotifier builds a Beacon whose single channel is a capture backend
 // registered under this test's unique name, and returns it with the capture.
-func captureNotifier(t *testing.T) (*beacon.Beacon, *maintCapture) {
+func captureNotifier(t *testing.T) (*courier.Beacon, *maintCapture) {
 	t.Helper()
 	id := t.Name()
 	c := &maintCapture{}
@@ -83,15 +83,15 @@ func captureNotifier(t *testing.T) (*beacon.Beacon, *maintCapture) {
 	maintCaptures[id] = c
 	maintCaptureMu.Unlock()
 
-	b, err := beacon.New(beacon.Config{
-		Channels: []beacon.ChannelConfig{{
+	b, err := courier.New(courier.Config{
+		Channels: []courier.ChannelConfig{{
 			Type:     "ballast-maint-capture",
-			MinLevel: beacon.LevelInfo,
+			MinLevel: courier.LevelInfo,
 			Settings: map[string]string{"id": id},
 		}},
 	}, nil)
 	if err != nil {
-		t.Fatalf("beacon.New: %v", err)
+		t.Fatalf("courier.New: %v", err)
 	}
 	return b, c
 }
@@ -134,7 +134,7 @@ func TestScheduledPruneFailure_SurfacesToNotifier(t *testing.T) {
 		t.Fatalf("a failed scheduled prune fired %d notifications, want exactly 1 (it must reach the operator, not only the log)", len(notes))
 	}
 	n := notes[0]
-	if n.Level != beacon.LevelError {
+	if n.Level != courier.LevelError {
 		t.Errorf("prune-failure notification level = %v, want LevelError", n.Level)
 	}
 	if !strings.Contains(n.Body, "prune boom") {
@@ -171,7 +171,7 @@ func TestScheduledCheckFailure_SurfacesToNotifier(t *testing.T) {
 		t.Fatalf("a failed scheduled check fired %d notifications, want exactly 1", len(notes))
 	}
 	n := notes[0]
-	if n.Level != beacon.LevelError {
+	if n.Level != courier.LevelError {
 		t.Errorf("check-failure notification level = %v, want LevelError", n.Level)
 	}
 	if !strings.Contains(strings.ToLower(n.Title+n.Body), "check") {

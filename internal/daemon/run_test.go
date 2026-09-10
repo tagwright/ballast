@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/engine"
@@ -75,9 +75,9 @@ func TestRun_InjectedDumpFailureSurfaces(t *testing.T) {
 	injected := errors.New("injected dump failure")
 	rt.Faults.Exec = injected
 
-	notifier, err := beacon.New(beacon.Config{}, nil)
+	notifier, err := courier.New(courier.Config{}, nil)
 	if err != nil {
-		t.Fatalf("beacon.New: %v", err)
+		t.Fatalf("courier.New: %v", err)
 	}
 
 	splayOff := false
@@ -151,9 +151,9 @@ func TestRun_InjectedListFailureSurfaces(t *testing.T) {
 	injected := errors.New("injected list failure")
 	rt.Faults.List = injected
 
-	notifier, err := beacon.New(beacon.Config{}, nil)
+	notifier, err := courier.New(courier.Config{}, nil)
 	if err != nil {
-		t.Fatalf("beacon.New: %v", err)
+		t.Fatalf("courier.New: %v", err)
 	}
 
 	deps := Deps{
@@ -191,9 +191,9 @@ func TestRun_InjectedWatchFailureSurfaces(t *testing.T) {
 	injected := errors.New("injected watch failure")
 	rt.Faults.Watch = injected
 
-	notifier, err := beacon.New(beacon.Config{}, nil)
+	notifier, err := courier.New(courier.Config{}, nil)
 	if err != nil {
-		t.Fatalf("beacon.New: %v", err)
+		t.Fatalf("courier.New: %v", err)
 	}
 
 	var logBuf syncBuffer
@@ -263,9 +263,9 @@ func TestRun_InjectedStopFailureSurfaces(t *testing.T) {
 	injected := errors.New("injected stop failure")
 	rt.Faults.Stop = injected
 
-	notifier, err := beacon.New(beacon.Config{}, nil)
+	notifier, err := courier.New(courier.Config{}, nil)
 	if err != nil {
-		t.Fatalf("beacon.New: %v", err)
+		t.Fatalf("courier.New: %v", err)
 	}
 
 	cfg := baseConfig(stateDir)

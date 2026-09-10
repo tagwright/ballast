@@ -22,7 +22,7 @@ const DefaultSecretsDir = "/run/ballast/secrets"
 // which every named-secret reference in a label or in Ballast's config gets
 // its value: labels and config name secrets, they never contain them.
 //
-// This signature intentionally matches beacon.SecretResolver so the same
+// This signature intentionally matches courier.SecretResolver so the same
 // Resolver can be handed straight to the notification and telemetry module
 // once Ballast wires it in.
 type Resolver func(name string) (string, error)

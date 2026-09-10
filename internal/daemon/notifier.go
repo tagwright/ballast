@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/secret"
@@ -22,45 +22,45 @@ import (
 // notifier a scheduled run reports through, and the CLI's "ballast backup"
 // uses it (via commonDeps.withNotifier) so an ad hoc run reports through
 // exactly the same channels.
-func BuildNotifier(cfg *config.Config, resolver secret.Resolver) (*beacon.Beacon, error) {
-	channels := make([]beacon.ChannelConfig, 0, len(cfg.Notifications))
+func BuildNotifier(cfg *config.Config, resolver secret.Resolver) (*courier.Beacon, error) {
+	channels := make([]courier.ChannelConfig, 0, len(cfg.Notifications))
 	for i, c := range cfg.Notifications {
 		level, err := parseLevel(c.MinLevel)
 		if err != nil {
 			return nil, fmt.Errorf("daemon: notification channel %d (%s): %w", i, c.Type, err)
 		}
-		channels = append(channels, beacon.ChannelConfig{
+		channels = append(channels, courier.ChannelConfig{
 			Type:     c.Type,
 			MinLevel: level,
 			Settings: c.Settings,
 		})
 	}
 	if len(channels) == 0 {
-		channels = append(channels, beacon.ChannelConfig{Type: "log"})
+		channels = append(channels, courier.ChannelConfig{Type: "log"})
 	}
 
-	telemetry := make([]beacon.TelemetryConfig, 0, len(cfg.Telemetry))
+	telemetry := make([]courier.TelemetryConfig, 0, len(cfg.Telemetry))
 	for _, t := range cfg.Telemetry {
-		telemetry = append(telemetry, beacon.TelemetryConfig{
+		telemetry = append(telemetry, courier.TelemetryConfig{
 			Type:     t.Type,
 			Settings: t.Settings,
 		})
 	}
 
-	beaconCfg := beacon.Config{Channels: channels, Telemetry: telemetry}
-	return beacon.New(beaconCfg, beacon.SecretResolver(resolver))
+	beaconCfg := courier.Config{Channels: channels, Telemetry: telemetry}
+	return courier.New(beaconCfg, courier.SecretResolver(resolver))
 }
 
 // parseLevel maps a config.ChannelConfig.MinLevel string onto a
-// beacon.Level. An empty value means "receive everything" (LevelInfo).
-func parseLevel(s string) (beacon.Level, error) {
+// courier.Level. An empty value means "receive everything" (LevelInfo).
+func parseLevel(s string) (courier.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "info":
-		return beacon.LevelInfo, nil
+		return courier.LevelInfo, nil
 	case "warn", "warning":
-		return beacon.LevelWarning, nil
+		return courier.LevelWarning, nil
 	case "error":
-		return beacon.LevelError, nil
+		return courier.LevelError, nil
 	default:
 		return 0, fmt.Errorf("unknown notification level %q", s)
 	}

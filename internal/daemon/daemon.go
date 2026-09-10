@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/engine"
@@ -48,7 +48,7 @@ const defaultDockerSocket = "/var/run/docker.sock"
 type Deps struct {
 	Runtime  runtime.Runtime
 	Engine   engine.Engine
-	Notifier *beacon.Beacon
+	Notifier *courier.Beacon
 	Clock    func() time.Time // scheduler clock; nil defaults to time.Now
 
 	Config   *config.Config

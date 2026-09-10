@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/daemon"
@@ -36,7 +36,7 @@ type commonDeps struct {
 	Runtime  runtime.Runtime
 	Engine   engine.Engine
 	Master   []byte // nil if no master secret is provisioned; per-service ballast.password-secret can still work
-	Notifier *beacon.Beacon
+	Notifier *courier.Beacon
 	Logger   *slog.Logger
 }
 

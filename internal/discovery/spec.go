@@ -51,7 +51,7 @@ type BackupSpec struct {
 	// push is not an alert.
 	NotifySuppress bool
 	// NotifyOnSuccess is ballast.notify.on-success: when true, a successful
-	// backup notifies at beacon.LevelWarning instead of the default
+	// backup notifies at courier.LevelWarning instead of the default
 	// LevelInfo, so it surfaces on channels configured to only forward
 	// warnings and errors. Failures are unaffected; they already notify at
 	// LevelError.

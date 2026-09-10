@@ -5,7 +5,7 @@
 // resolves the service's repository, runs the pre-hook, optionally stops the
 // container, drives the engine over the filesystem paths and stream dumps
 // discovery resolved, restarts the container, applies retention, runs the
-// post-hook, and reports the outcome through beacon. It is the integration
+// post-hook, and reports the outcome through courier. It is the integration
 // layer that ties runtime, engine, discovery, config, secret, and beacon
 // together; it holds no state of its own beyond a single run.
 package orchestrator
@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/discovery"
@@ -49,7 +49,7 @@ type Deps struct {
 	Config   *config.Config
 	Resolver secret.Resolver
 	Master   []byte
-	Notifier *beacon.Beacon
+	Notifier *courier.Beacon
 	Logger   *slog.Logger
 
 	// StateDir, when non-empty, is where Ballast writes per-run state: the
@@ -272,7 +272,7 @@ func runHook(ctx context.Context, rt runtime.Runtime, containerID string, hook *
 	return oc, nil
 }
 
-// reportOutcome builds a beacon.Notification and beacon.Health from runErr
+// reportOutcome builds a courier.Notification and courier.Health from runErr
 // and hands both to d.Notifier. It runs on a context detached from ctx (with
 // its own bounded timeout) so a cancelled run context never suppresses the
 // outcome report, and it tolerates a nil Notifier by doing nothing.
@@ -296,12 +296,12 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 		"duration": elapsed.Round(time.Second).String(),
 	}
 
-	successLevel := beacon.LevelInfo
+	successLevel := courier.LevelInfo
 	if spec.NotifyOnSuccess {
-		successLevel = beacon.LevelWarning
+		successLevel = courier.LevelWarning
 	}
 
-	n := beacon.Notification{
+	n := courier.Notification{
 		Title:  fmt.Sprintf("Backup OK: %s", spec.Service),
 		Body:   fmt.Sprintf("Backup completed for %s in %s.", spec.Service, elapsed.Round(time.Second)),
 		Level:  successLevel,
@@ -311,7 +311,7 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 	if !ok {
 		n.Title = fmt.Sprintf("Backup FAILED: %s", spec.Service)
 		n.Body = fmt.Sprintf("Backup for %s failed after %s: %v", spec.Service, elapsed.Round(time.Second), runErr)
-		n.Level = beacon.LevelError
+		n.Level = courier.LevelError
 		message = runErr.Error()
 	}
 
@@ -321,7 +321,7 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 		}
 	}
 
-	h := beacon.Health{
+	h := courier.Health{
 		Name:     spec.Service,
 		OK:       ok,
 		Message:  message,
@@ -343,7 +343,7 @@ func reportOutcome(ctx context.Context, d Deps, spec *discovery.BackupSpec, runE
 // destroying the "your backups are gone" signal. So: prior successful runs
 // recorded for the service plus a now-uninitialized destination is treated as a
 // regression and refused with an error, which rides the normal failure path
-// (reportOutcome -> beacon.LevelError, "Backup FAILED: <service>"). No prior
+// (reportOutcome -> courier.LevelError, "Backup FAILED: <service>"). No prior
 // successful runs means a genuinely new service, and it returns nil to
 // initialize as before.
 //

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/discovery"
@@ -22,7 +22,7 @@ import (
 // discoverAll lists every container the runtime knows about and registers a
 // scheduled job for each one that opts in. It is the daemon's initial
 // discovery pass, run once before the watch loop and the scheduler start.
-func discoverAll(ctx context.Context, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *beacon.Beacon) error {
+func discoverAll(ctx context.Context, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *courier.Beacon) error {
 	containers, err := rt.List(ctx)
 	if err != nil {
 		return fmt.Errorf("daemon: list containers: %w", err)
@@ -39,14 +39,14 @@ func discoverAll(ctx context.Context, rt runtime.Runtime, cfg *config.Config, re
 // addition to logging) on a discovery error, since a skipped service with a
 // validation problem is exactly the kind of thing an operator wants to hear
 // about.
-func discoverOne(c runtime.Container, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *beacon.Beacon) {
+func discoverOne(c runtime.Container, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *courier.Beacon) {
 	spec, warnings, err := discovery.Discover(c, cfg)
 	for _, w := range warnings {
 		log.Warn("daemon: discovery warning", "warning", w)
 	}
 	if err != nil {
 		log.Error("daemon: discovery failed", "container", c.Name, "error", err)
-		notify(notifier, beacon.LevelWarning, "Ballast: discovery error",
+		notify(notifier, courier.LevelWarning, "Ballast: discovery error",
 			fmt.Sprintf("container %s: %v", c.Name, err))
 		return
 	}
@@ -66,7 +66,7 @@ func discoverOne(c runtime.Container, cfg *config.Config, reg *registry, sched *
 		}
 		joined := strings.Join(quoted, ", ")
 		log.Warn("daemon: unrecognized ballast label suffix", "container", c.Name, "service", spec.Service, "suffixes", joined)
-		notify(notifier, beacon.LevelWarning, "Ballast: unrecognized label suffix",
+		notify(notifier, courier.LevelWarning, "Ballast: unrecognized label suffix",
 			fmt.Sprintf("service %s: unrecognized ballast label suffix(es) %s (a typo, or from a newer ballast version); the service is still being backed up, but these labels are not applied. See docs/LABELS.md for the accepted labels.", spec.Service, joined))
 	}
 
@@ -77,7 +77,7 @@ func discoverOne(c runtime.Container, cfg *config.Config, reg *registry, sched *
 // the scheduler) in sync: a start event re-discovers the container and
 // adds or updates its job, a die or destroy event removes it. It returns
 // when ctx is cancelled or the event stream ends.
-func watchLoop(ctx context.Context, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *beacon.Beacon) {
+func watchLoop(ctx context.Context, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *courier.Beacon) {
 	events, errs := rt.Watch(ctx)
 
 	for {
@@ -103,7 +103,7 @@ func watchLoop(ctx context.Context, rt runtime.Runtime, cfg *config.Config, reg 
 }
 
 // handleEvent applies one runtime.Event to reg and sched.
-func handleEvent(ctx context.Context, ev runtime.Event, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *beacon.Beacon) {
+func handleEvent(ctx context.Context, ev runtime.Event, rt runtime.Runtime, cfg *config.Config, reg *registry, sched *schedule.Scheduler, deps orchestrator.Deps, log *slog.Logger, notifier *courier.Beacon) {
 	switch ev.Type {
 	case runtime.EventStart:
 		c, err := rt.Inspect(ctx, ev.ID)

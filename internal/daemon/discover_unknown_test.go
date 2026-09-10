@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 	"github.com/tagwright/core/runtime"
 
 	"github.com/tagwright/ballast/internal/config"
@@ -57,7 +57,7 @@ func TestDiscoverOne_UnknownSuffixAlertsButStillRegisters(t *testing.T) {
 		t.Fatalf("an unknown suffix fired %d notifications, want exactly 1 (it must reach the operator)", len(notes))
 	}
 	n := notes[0]
-	if n.Level != beacon.LevelWarning {
+	if n.Level != courier.LevelWarning {
 		t.Errorf("unknown-suffix alert level = %v, want LevelWarning", n.Level)
 	}
 	if !strings.Contains(n.Body, "retenton.last") {

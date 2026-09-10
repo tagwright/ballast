@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/tagwright/beacon"
+	"github.com/tagwright/courier"
 
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/orchestrator"
@@ -50,13 +50,13 @@ func (r *registry) specs() []*discovery.BackupSpec {
 // already owns spec.Service, the new spec is rejected as a duplicate: the
 // existing registration is left in place, and the caller is expected to
 // alert.
-func (r *registry) register(sched *schedule.Scheduler, deps orchestrator.Deps, spec *discovery.BackupSpec, log *slog.Logger, notifier *beacon.Beacon) {
+func (r *registry) register(sched *schedule.Scheduler, deps orchestrator.Deps, spec *discovery.BackupSpec, log *slog.Logger, notifier *courier.Beacon) {
 	r.mu.Lock()
 	if existing, ok := r.byService[spec.Service]; ok && existing.ContainerID != spec.ContainerID {
 		r.mu.Unlock()
 		log.Error("daemon: duplicate service name, skipping",
 			"service", spec.Service, "container", spec.ContainerID, "existing_container", existing.ContainerID)
-		notify(notifier, beacon.LevelError, "Ballast: duplicate service name",
+		notify(notifier, courier.LevelError, "Ballast: duplicate service name",
 			fmt.Sprintf("service %q on container %s conflicts with existing container %s; the new registration was skipped",
 				spec.Service, spec.ContainerID, existing.ContainerID))
 		return
@@ -125,11 +125,11 @@ func (r *registry) unregisterContainer(sched *schedule.Scheduler, containerID st
 
 // notify sends a Notification through notifier, tolerating a nil notifier
 // (a no-op) since not every daemon deployment configures alerting.
-func notify(notifier *beacon.Beacon, level beacon.Level, title, body string) {
+func notify(notifier *courier.Beacon, level courier.Level, title, body string) {
 	if notifier == nil {
 		return
 	}
-	_ = notifier.Notify(context.Background(), beacon.Notification{
+	_ = notifier.Notify(context.Background(), courier.Notification{
 		Title: title,
 		Body:  body,
 		Level: level,
