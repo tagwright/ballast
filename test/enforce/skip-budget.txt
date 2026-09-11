@@ -1,0 +1,20 @@
+# Skip budget for ballast (Testing Standard enforceability layer, task #552).
+#
+# INTEGRATION_SKIP_BUDGET is the most t.Skip/t.Skipf/t.SkipNow calls allowed
+# in //go:build integration test files. These are the ALLOWED resource-absent
+# skips: each skips cleanly when its resource (a restic binary, a Docker
+# socket) is absent and runs for real under the live harness on the
+# self-hosted runner, or when the operator runs it. This number is a ratchet:
+# removing a skip never breaks the build. Raising it is a reviewed change that
+# must name the new resource-absent skip it admits.
+#
+# Skips in NON-integration test files (the always-run `go test ./...` leg) are
+# banned outright, budget 0, enforced by the script with no entry here: that
+# leg has no absent resource to justify a skip, so a skip there is
+# skip-to-get-green.
+#
+# Today's 4 integration-leg skips:
+#   internal/engine/forget_time_itest_test.go   (restic on PATH)
+#   internal/engine/ensurerepo_guard_itest_test.go (restic on PATH)
+#   internal/verify/verify_itest_test.go          (Docker socket, restic; 2 skips)
+INTEGRATION_SKIP_BUDGET=4

@@ -1,0 +1,17 @@
+# Wiring-package statement-coverage floors for ballast (Testing Standard
+# enforceability layer, task #552). Format: "<package> <floor-percent>", one
+# per line, blank lines and #-comments ignored.
+#
+# Scoped to the WIRING packages only — the socket-event-to-effect layer where
+# this suite's confirmed bugs live — never a global percentage. This is a
+# ratchet: a floor may only RISE. Raise a number when coverage climbs so a
+# later regression trips the gate; never lower one to make a regression pass
+# (that is the "never weaken a gate" rule the standard forbids).
+#
+# Baselines measured 2026-09-11 on go1.25.8 (deterministic under -count=1),
+# floored to a whole percent at/below the measured value to absorb toolchain
+# rounding:
+#   internal/daemon        measured 46.2%
+#   internal/orchestrator  measured 44.2%
+internal/daemon 46
+internal/orchestrator 44

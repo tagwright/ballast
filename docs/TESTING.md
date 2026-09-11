@@ -150,7 +150,7 @@ Three layers, in increasing order of how much they actually prove:
      refuses the init (the vanished-destination regression from #231) gets
      that error surfaced and leaves no fresh repository behind. See the
      "Repository auto-init guard" row below.
-   - `run-podman.sh` — the Podman adapter (`pkg/runtime/podman.go`) against
+   - `run-podman.sh` — the Podman adapter (now `github.com/tagwright/core/runtime/podman.go`, moved out of ballast's embedded `pkg/runtime`) against
      a real Podman socket, not just a compile check, the first itest to do
      so. Stands up its own throwaway, self-contained nested Podman (a
      privileged `quay.io/podman/stable` container running Podman's
@@ -461,7 +461,7 @@ coordination at all, rather than dropping `:ro` the way `run-retention.sh`
 did for its `check --read-data`, which does need to be able to write).
 
 **Ninth bug, found and fixed running the Podman adapter against a real
-socket for the first time**: `pkg/runtime/engine.go`'s `mapEventAction`
+socket for the first time**: `github.com/tagwright/core/runtime/engine.go`'s `mapEventAction`
 (the shared code both `DockerRuntime` and `PodmanRuntime` use to normalize
 the runtime's raw lifecycle-event action into Ballast's `EventType`) only
 recognized `events.ActionDestroy` ("destroy") as a container-removal event.
@@ -490,10 +490,11 @@ Fixed by mapping both `events.ActionDestroy` and `events.ActionRemove` to
 `EventDestroy`; a real Docker daemon has never been observed to emit
 `ActionRemove` for a container (only for other resource types, per
 `moby/moby`'s own event vocabulary), so widening the match costs the
-integration-proven Docker path nothing. `pkg/runtime/engine_test.go`'s
-`TestMapEventActionDestroyAndRemoveBothMapToEventDestroy` pins this at the
-unit level; `run-podman.sh`'s final step reproduces the live scenario end
-to end against a real socket.
+integration-proven Docker path nothing. `github.com/tagwright/core/runtime/engine_test.go`'s
+`github.com/tagwright/core/runtime.TestMapEventActionDestroyAndRemoveBothMapToEventDestroy`
+pins this at the unit level (the adapter and its test moved to core with the
+drop of ballast's embedded `pkg/runtime`); `run-podman.sh`'s final step
+reproduces the live scenario end to end against a real socket.
 
 ## What's still unproven, bluntly
 
