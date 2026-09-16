@@ -119,7 +119,6 @@ func TestScheduledPruneFailure_SurfacesToNotifier(t *testing.T) {
 	}
 	deps := orchestrator.Deps{
 		Config:   cfg,
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		Notifier: notifier,
 	}
 	reg := seedReg(&discovery.BackupSpec{Service: "svc", Destination: "local", RepoPath: "svc"})
@@ -159,7 +158,6 @@ func TestScheduledCheckFailure_SurfacesToNotifier(t *testing.T) {
 	}
 	deps := orchestrator.Deps{
 		Config:   cfg,
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		Notifier: notifier,
 	}
 	spec := &discovery.BackupSpec{Service: "svc", Destination: "gone", RepoPath: "svc"}

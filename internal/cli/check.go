@@ -81,7 +81,7 @@ record is the local manual-path record it is today.`,
 				return fmt.Errorf("service %q not found: no running container currently discoverable with ballast.enable=true and this service name", service)
 			}
 
-			repo, err := orchestrator.BuildRepo(spec, d.Config, d.Resolver, d.Master)
+			repo, err := orchestrator.BuildRepo(spec, d.Config, d.Resolver)
 			if err != nil {
 				return fmt.Errorf("build repo for %q: %w", service, err)
 			}

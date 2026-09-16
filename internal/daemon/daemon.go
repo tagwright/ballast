@@ -42,9 +42,11 @@ const defaultDockerSocket = "/var/run/docker.sock"
 // Everything here is a collaborator the production path constructs from config
 // and a test substitutes: the runtime, the backup engine (the "backend-exec"),
 // the notifier, and the scheduler clock. The remaining fields (Config, the
-// resolved Master and HostID, the record StateDir, Version) are the resolved
+// secret Resolver, HostID, the record StateDir, Version) are the resolved
 // configuration run threads through to the orchestrator; a test sets them
-// directly.
+// directly. The master secret is not carried here: the orchestrator resolves
+// it fresh per run through Resolver, so the daemon self-heals if it started
+// before the master was provisioned.
 type Deps struct {
 	Runtime  runtime.Runtime
 	Engine   engine.Engine
@@ -55,7 +57,6 @@ type Deps struct {
 	Logger   *slog.Logger
 	Version  string
 	Resolver secret.Resolver
-	Master   []byte
 	HostID   string
 	StateDir string
 }
@@ -88,11 +89,15 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 
 	resolver := secret.FileEnvResolver(cfg.SecretsDir)
 
-	master, err := secret.LoadMaster(resolver)
-	if err != nil {
-		logger.Warn("daemon: no master secret available; services deriving their repo password will fail until one is provisioned (a per-service ballast.password-secret can still work)",
-			"error", err)
-		master = nil
+	// Informational only: probe the master at startup so an operator sees a
+	// clear boot-time warning if it is missing. The value is deliberately not
+	// captured or threaded anywhere. The orchestrator resolves the master
+	// fresh per run through resolver, so a daemon that started with no master
+	// self-heals once one is provisioned, without a restart; only master-
+	// derived backups fail in the meantime, and each such run fails loudly.
+	if _, merr := secret.LoadMaster(resolver); merr != nil {
+		logger.Warn("daemon: no master secret available at startup; master-derived backups will fail until one is provisioned, then self-heal on the next run with no restart (a per-service ballast.password-secret still works meanwhile)",
+			"error", merr)
 	}
 
 	notifier, err := BuildNotifier(cfg, resolver)
@@ -119,7 +124,6 @@ func Run(ctx context.Context, configPath, version string, logger *slog.Logger) e
 		Logger:   logger,
 		Version:  version,
 		Resolver: resolver,
-		Master:   master,
 		HostID:   hostID,
 		StateDir: recordStateDir,
 	})
@@ -154,7 +158,6 @@ func run(ctx context.Context, d Deps) error {
 		Engine:   d.Engine,
 		Config:   d.Config,
 		Resolver: d.Resolver,
-		Master:   d.Master,
 		Notifier: d.Notifier,
 		Logger:   logger,
 		StateDir: d.StateDir,

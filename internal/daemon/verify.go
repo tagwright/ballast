@@ -57,7 +57,7 @@ func runScheduledVerify(ctx context.Context, deps orchestrator.Deps, spec *disco
 		return
 	}
 
-	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver, deps.Master)
+	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver)
 	if err != nil {
 		log.Error("daemon: verify build repo", "service", spec.Service, "error", err)
 		return

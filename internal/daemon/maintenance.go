@@ -86,7 +86,7 @@ func runCheckMaintenance(ctx context.Context, reg *registry, deps orchestrator.D
 // runCheckOne builds spec's repo, runs one metadata integrity check, logs the
 // outcome exactly as the generic maintenance path did, and writes the record.
 func runCheckOne(ctx context.Context, spec *discovery.BackupSpec, deps orchestrator.Deps, log *slog.Logger) {
-	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver, deps.Master)
+	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver)
 	if err != nil {
 		log.Error("daemon: maintenance failed", "action", "check", "service", spec.Service, "error", err)
 		notify(deps.Notifier, courier.LevelError, "Ballast: integrity check failed",
@@ -159,7 +159,7 @@ func runMaintenance(ctx context.Context, action string, reg *registry, deps orch
 
 // runMaintenanceOne builds spec's repo and runs do against it once.
 func runMaintenanceOne(ctx context.Context, action string, spec *discovery.BackupSpec, deps orchestrator.Deps, log *slog.Logger, do func(ctx context.Context, repo engine.Repo) error) error {
-	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver, deps.Master)
+	repo, err := orchestrator.BuildRepo(spec, deps.Config, deps.Resolver)
 	if err != nil {
 		return err
 	}

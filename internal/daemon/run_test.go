@@ -99,7 +99,6 @@ func TestRun_InjectedDumpFailureSurfaces(t *testing.T) {
 		Clock:    rt.Clock.Now, // fake clock drives the scheduler deterministically
 		Config:   cfg,
 		Version:  "test",
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		HostID:   "h_0000000000000000",
 		StateDir: stateDir,
 	}
@@ -163,7 +162,6 @@ func TestRun_InjectedListFailureSurfaces(t *testing.T) {
 		Clock:    rt.Clock.Now,
 		Config:   baseConfig(stateDir),
 		Version:  "test",
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		HostID:   "h_0000000000000000",
 		StateDir: stateDir,
 	}
@@ -207,7 +205,6 @@ func TestRun_InjectedWatchFailureSurfaces(t *testing.T) {
 		Clock:    rt.Clock.Now,
 		Config:   baseConfig(stateDir),
 		Version:  "test",
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		HostID:   "h_0000000000000000",
 		StateDir: stateDir,
 	}
@@ -278,7 +275,6 @@ func TestRun_InjectedStopFailureSurfaces(t *testing.T) {
 		Clock:    rt.Clock.Now,
 		Config:   cfg,
 		Version:  "test",
-		Master:   []byte("test-master-key-not-a-real-secret"),
 		HostID:   "h_0000000000000000",
 		StateDir: stateDir,
 	}

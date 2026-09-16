@@ -21,7 +21,7 @@ func TestBuildRepoNoDestinationsConfigured(t *testing.T) {
 	spec := &discovery.BackupSpec{Service: "librespeed-ts", Destination: "local"}
 	cfg := &config.Config{} // no destinations: config never loaded
 
-	_, err := BuildRepo(spec, cfg, noopResolver, nil)
+	_, err := BuildRepo(spec, cfg, noopResolver)
 	if err == nil {
 		t.Fatal("BuildRepo: expected an error when no destinations are configured")
 	}
@@ -43,7 +43,7 @@ func TestBuildRepoUnknownDestinationListsConfigured(t *testing.T) {
 		"r2":    {URL: "s3:example"},
 	}}
 
-	_, err := BuildRepo(spec, cfg, noopResolver, nil)
+	_, err := BuildRepo(spec, cfg, noopResolver)
 	if err == nil {
 		t.Fatal("BuildRepo: expected an error for an unknown destination name")
 	}

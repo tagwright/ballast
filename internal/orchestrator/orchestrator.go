@@ -48,7 +48,6 @@ type Deps struct {
 	Engine   engine.Engine
 	Config   *config.Config
 	Resolver secret.Resolver
-	Master   []byte
 	Notifier *courier.Beacon
 	Logger   *slog.Logger
 
@@ -122,7 +121,7 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 
 	var runErr error
 
-	repo, err := BuildRepo(spec, d.Config, d.Resolver, d.Master)
+	repo, err := BuildRepo(spec, d.Config, d.Resolver)
 	if err != nil {
 		runErr = fmt.Errorf("orchestrator: build repo: %w", err)
 	}
@@ -170,12 +169,22 @@ func RunBackup(ctx context.Context, spec *discovery.BackupSpec, d Deps) error {
 
 // BuildRepo resolves spec's destination into an engine.Repo: the URL joins
 // the named destination's URL with spec.RepoPath, the password closure
-// derives from master unless spec.PasswordSecret overrides it, and Env
-// resolves every one of the destination's named secrets up front.
+// derives from the master secret unless spec.PasswordSecret overrides it, and
+// Env resolves every one of the destination's named secrets up front.
+//
+// The master secret is resolved LAZILY, inside the password closure, every
+// time a repo password is actually needed (not once when the Repo is built).
+// This is what lets a long-lived daemon self-heal: if the master secret is
+// absent when a run starts, that run fails loudly with the load error, but a
+// later run succeeds once the secret is present, with no daemon restart. A
+// service with an explicit ballast.password-secret override never touches the
+// master at all, so it keeps working even while the master is absent (granular
+// degradation). Resolution stays off the build path entirely so BuildRepo
+// itself never fails on a missing master.
 //
 // Exported so the daemon's maintenance jobs (prune, check) can build the
 // same Repo for a service outside of a full RunBackup.
-func BuildRepo(spec *discovery.BackupSpec, cfg *config.Config, resolver secret.Resolver, master []byte) (engine.Repo, error) {
+func BuildRepo(spec *discovery.BackupSpec, cfg *config.Config, resolver secret.Resolver) (engine.Repo, error) {
 	dest, ok := cfg.Destinations[spec.Destination]
 	if !ok {
 		// No destinations at all almost always means the config never loaded
@@ -207,6 +216,14 @@ func BuildRepo(spec *discovery.BackupSpec, cfg *config.Config, resolver secret.R
 	password := func() (string, error) {
 		if passwordSecret != "" {
 			return resolver(passwordSecret)
+		}
+		// Resolve the master fresh at call time, not at BuildRepo time, so a
+		// daemon that started with no master self-heals once one is present.
+		// A load failure (absent or invalid master) surfaces here as the run's
+		// failure rather than being cached; it is never swallowed.
+		master, err := secret.LoadMaster(resolver)
+		if err != nil {
+			return "", err
 		}
 		return secret.DeriveRepoPassword(master, service)
 	}

@@ -35,16 +35,16 @@ type commonDeps struct {
 	Resolver secret.Resolver
 	Runtime  runtime.Runtime
 	Engine   engine.Engine
-	Master   []byte // nil if no master secret is provisioned; per-service ballast.password-secret can still work
 	Notifier *courier.Beacon
 	Logger   *slog.Logger
 }
 
 // buildCommonDeps loads configPath and wires up the logger, secret
 // resolver, Docker runtime, and restic engine, exactly as the daemon does.
-// The master secret is loaded best-effort: its absence is not an error
-// here (only DeriveRepoPassword, called lazily by BuildRepo, ever needs
-// it), mirroring how the daemon itself treats a missing master secret.
+// The master secret is not loaded here: BuildRepo resolves it lazily through
+// the resolver only when a master-derived repo password is actually needed,
+// so a missing master is never an error at wiring time (and a per-service
+// ballast.password-secret works with no master at all).
 func buildCommonDeps(configPath string) (*commonDeps, error) {
 	logger, err := newLogger()
 	if err != nil {
@@ -58,11 +58,6 @@ func buildCommonDeps(configPath string) (*commonDeps, error) {
 
 	resolver := secret.FileEnvResolver(cfg.SecretsDir)
 
-	master, err := secret.LoadMaster(resolver)
-	if err != nil {
-		master = nil
-	}
-
 	rt, err := buildRuntime(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build runtime: %w", err)
@@ -73,7 +68,6 @@ func buildCommonDeps(configPath string) (*commonDeps, error) {
 		Resolver: resolver,
 		Runtime:  rt,
 		Engine:   engine.NewRestic(""),
-		Master:   master,
 		Logger:   logger,
 	}, nil
 }
@@ -214,5 +208,5 @@ func resolveRepo(ctx context.Context, d *commonDeps, service, destFlag, repoPath
 		}
 	}
 
-	return orchestrator.BuildRepo(spec, d.Config, d.Resolver, d.Master)
+	return orchestrator.BuildRepo(spec, d.Config, d.Resolver)
 }

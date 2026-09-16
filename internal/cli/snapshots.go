@@ -70,7 +70,7 @@ no label-free way to enumerate services that no longer exist.`,
 
 			byService := make(map[string][]engine.Snapshot, len(specs))
 			for _, spec := range specs {
-				repo, err := orchestrator.BuildRepo(spec, d.Config, d.Resolver, d.Master)
+				repo, err := orchestrator.BuildRepo(spec, d.Config, d.Resolver)
 				if err != nil {
 					return fmt.Errorf("build repo for %q: %w", spec.Service, err)
 				}
