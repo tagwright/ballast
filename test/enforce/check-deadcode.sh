@@ -20,7 +20,19 @@ here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 cd "$repo"
 
-out="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" ./... 2>&1)"
+# Capture findings (stdout) separately from download noise and real errors
+# (stderr). On a cold module cache the analyzer prints "go: downloading ..." to
+# stderr, so folding stderr into the findings would false-fail a clean tree.
+# A nonzero exit is a real analyzer failure, distinct from a clean run.
+errf="$(mktemp)"
+if out="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" ./... 2>"$errf")"; then rc=0; else rc=$?; fi
+if [ "$rc" -ne 0 ]; then
+  echo "FAIL: deadcode analyzer failed to run (exit $rc):" >&2
+  cat "$errf" >&2
+  rm -f "$errf"
+  exit 1
+fi
+rm -f "$errf"
 if [ -n "$out" ]; then
   echo "FAIL: deadcode found unreachable production code:" >&2
   printf '%s\n' "$out" >&2
