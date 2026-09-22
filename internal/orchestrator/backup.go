@@ -266,8 +266,14 @@ type streamWaitReader struct {
 }
 
 // ensureWaited calls wait exactly once, recording the dump's exit code and, if
-// it exited non-zero, the resulting error. It is idempotent, so both the EOF
-// path in Read and the unconditional check in runStreamBackup can call it.
+// it failed, the resulting error. It is idempotent, so both the EOF path in
+// Read and the unconditional check in runStreamBackup can call it.
+//
+// A non-zero exit code is a failure even when wait returns a nil error: the
+// gate keys on the code as well as the error so a future runtime/core that
+// reports (code, nil) on a non-zero exit cannot let a truncated or failed dump
+// be kept and reported OK. The current core returns a non-nil error on a
+// non-zero exit, so this only adds a belt to the existing suspenders.
 func (s *streamWaitReader) ensureWaited() {
 	if s.waited {
 		return
@@ -277,6 +283,8 @@ func (s *streamWaitReader) ensureWaited() {
 	s.exitCode = code
 	if werr != nil {
 		s.waitErr = fmt.Errorf("dump exited non-zero: %w", werr)
+	} else if code != 0 {
+		s.waitErr = fmt.Errorf("dump exited non-zero: exit status %d", code)
 	}
 }
 
