@@ -92,14 +92,55 @@ func (d *commonDeps) withNotifier() error {
 // than exported from internal/daemon, since that package's Run is meant to
 // be the daemon's single self-contained wiring path.
 func buildRuntime(cfg *config.Config) (runtime.Runtime, error) {
+	var rt runtime.Runtime
 	switch cfg.Runtime {
 	case "", "docker":
-		return runtime.NewDocker(dockerSocket(cfg)), nil
+		rt = runtime.NewDocker(dockerSocket(cfg))
 	case "podman":
-		return runtime.NewPodman(podmanSocket(cfg)), nil
+		rt = runtime.NewPodman(podmanSocket(cfg))
 	default:
 		return nil, fmt.Errorf("unknown runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
 	}
+	if err := requireRuntimeCapabilities(rt); err != nil {
+		_ = rt.Close()
+		return nil, err
+	}
+	return rt, nil
+}
+
+// The concrete Docker and Podman runtime adapters must satisfy every optional
+// capability ballast's verify path relies on. These compile-time assertions
+// pin that: if a future core drops Provisioner or NetworkInspector from either
+// adapter, ballast stops compiling here rather than degrading silently at run
+// time. This is the version-skew guard behind requireRuntimeCapabilities.
+var (
+	_ runtime.Runtime          = (*runtime.DockerRuntime)(nil)
+	_ runtime.Provisioner      = (*runtime.DockerRuntime)(nil)
+	_ runtime.NetworkInspector = (*runtime.DockerRuntime)(nil)
+	_ runtime.Runtime          = (*runtime.PodmanRuntime)(nil)
+	_ runtime.Provisioner      = (*runtime.PodmanRuntime)(nil)
+	_ runtime.NetworkInspector = (*runtime.PodmanRuntime)(nil)
+)
+
+// requireRuntimeCapabilities fails loudly, at the point the runtime is built,
+// when the adapter does not provide the optional capabilities ballast's verify
+// path needs: Provisioner (standing up throwaway containers, volumes, and
+// networks) and NetworkInspector (confirming a throwaway network is internal
+// before the record attests isolation). The concrete Docker and Podman adapters
+// always satisfy both -- the compile-time assertions above pin that -- so this
+// can only fire if a ballast-side wrapper drops one of the optional methods,
+// surfacing the skew once, by name, at startup, instead of as a per-verify
+// runtime_unavailable inconclusive that reads like a data problem. It would NOT
+// have caught #896, whose failing record was files mode and never touched a
+// provisioner; it is the defensive fix for a future wrapper.
+func requireRuntimeCapabilities(rt runtime.Runtime) error {
+	if _, ok := rt.(runtime.Provisioner); !ok {
+		return fmt.Errorf("runtime %T does not implement runtime.Provisioner (PullImage/CreateContainer/CreateNetwork/CreateVolume and teardown), which ballast verify container and stream-restore modes require", rt)
+	}
+	if _, ok := rt.(runtime.NetworkInspector); !ok {
+		return fmt.Errorf("runtime %T does not implement runtime.NetworkInspector (ListNetworks), which ballast verify needs to confirm throwaway network isolation", rt)
+	}
+	return nil
 }
 
 // dockerSocket resolves the Docker API socket path the same way

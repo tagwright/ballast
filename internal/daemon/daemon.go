@@ -193,14 +193,40 @@ func run(ctx context.Context, d Deps) error {
 // to runtime.NewPodman when cfg.Socket and CONTAINER_HOST are both unset,
 // so that logic lives in one place.
 func buildRuntime(cfg *config.Config) (runtime.Runtime, error) {
+	var rt runtime.Runtime
 	switch cfg.Runtime {
 	case "", "docker":
-		return runtime.NewDocker(dockerSocket(cfg)), nil
+		rt = runtime.NewDocker(dockerSocket(cfg))
 	case "podman":
-		return runtime.NewPodman(podmanSocket(cfg)), nil
+		rt = runtime.NewPodman(podmanSocket(cfg))
 	default:
 		return nil, fmt.Errorf("unknown runtime %q, want \"docker\" or \"podman\"", cfg.Runtime)
 	}
+	if err := requireRuntimeCapabilities(rt); err != nil {
+		_ = rt.Close()
+		return nil, err
+	}
+	return rt, nil
+}
+
+// requireRuntimeCapabilities fails loudly at daemon startup when the runtime
+// adapter lacks an optional capability the scheduled verify path needs:
+// Provisioner (throwaway containers, volumes, networks) and NetworkInspector
+// (confirming a throwaway network is internal before the record attests
+// isolation). The concrete Docker and Podman adapters always satisfy both (the
+// compile-time assertions in internal/cli pin that for the whole module), so
+// this only fires if a ballast-side wrapper drops one of the optional methods,
+// surfacing the skew once, by name, at boot -- the airlock daemon uses the same
+// startup pattern for its own NetworkInspector requirement. It would NOT have
+// caught #896; it is the defensive fix for a future wrapper.
+func requireRuntimeCapabilities(rt runtime.Runtime) error {
+	if _, ok := rt.(runtime.Provisioner); !ok {
+		return fmt.Errorf("runtime %T does not implement runtime.Provisioner (PullImage/CreateContainer/CreateNetwork/CreateVolume and teardown), which ballast verify container and stream-restore modes require", rt)
+	}
+	if _, ok := rt.(runtime.NetworkInspector); !ok {
+		return fmt.Errorf("runtime %T does not implement runtime.NetworkInspector (ListNetworks), which ballast verify needs to confirm throwaway network isolation", rt)
+	}
+	return nil
 }
 
 // dockerSocket resolves the Docker API socket path: cfg.Socket if set,
