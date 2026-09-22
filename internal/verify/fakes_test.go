@@ -23,6 +23,7 @@ import (
 // without a real repository.
 type fakeEngine struct {
 	snaps      []engine.Snapshot
+	snapsErr   error             // when set, Snapshots returns it (a repo open/list failure)
 	files      map[string][]byte // absolute source path -> content, laid down under Target
 	restoreErr error
 }
@@ -32,6 +33,9 @@ func (f *fakeEngine) Name() string { return "restic" }
 func (f *fakeEngine) Version(context.Context) string { return "0.19.1" }
 
 func (f *fakeEngine) Snapshots(context.Context, engine.Repo) ([]engine.Snapshot, error) {
+	if f.snapsErr != nil {
+		return nil, f.snapsErr
+	}
 	return f.snaps, nil
 }
 

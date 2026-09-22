@@ -17,6 +17,8 @@ package verify
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +26,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tagwright/ballast/internal/config"
 	"github.com/tagwright/ballast/internal/discovery"
 	"github.com/tagwright/ballast/internal/engine"
+	"github.com/tagwright/ballast/internal/orchestrator"
+	"github.com/tagwright/ballast/internal/record"
+	"github.com/tagwright/ballast/internal/secret"
 	"github.com/tagwright/core/runtime"
 )
 
@@ -189,6 +195,174 @@ func TestLiveContainerModeNginx(t *testing.T) {
 		t.Errorf("scratch not destroyed: %v", deref(v.ScratchDestroyErr))
 	}
 	assertNoItestLeftovers(t, rt)
+}
+
+// TestLiveDiscoverBackupThenVerifySameRepo is the end-to-end detection guard for
+// #896. It drives a real restic backup and a real restic verify off discovery
+// of the SAME labelled container, and asserts the verify targets the repository
+// the backup wrote (equal repo_id) and finds the snapshot the backup produced
+// (equal, non-null snapshot_id). The other verify itests hand-seed the
+// repository and hand-build the BackupSpec, so they never exercise discovery ->
+// repoID -> BuildRepo on both sides and cannot catch a verify against a service
+// that was never backed up -- the exact shape of #896, where verify listed a
+// repo that the backup never created and mislabelled the resulting restic error.
+//
+// Files mode is used so no image is pulled: a files-mode verify never execs into
+// the source container, and a files-mode backup with no stop or hooks never
+// touches the runtime, so the source container needs no live instance -- its
+// labels and single bind mount are read exactly as the CLI's per-container
+// discovery loop reads each container rt.List returns.
+func TestLiveDiscoverBackupThenVerifySameRepo(t *testing.T) {
+	requireLive(t)
+
+	stateDir := t.TempDir()
+	repoDir := t.TempDir()
+
+	// A real host directory of data to back up. HostRoots maps it to itself: the
+	// test process runs on the host (not inside a mount namespace), so discovery
+	// resolves the container's bind mount straight to this real path.
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "marker"), []byte("verify-me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const master = "synthetic-itest-master-for-hkdf-derivation-0001" // >= 32 bytes, non-secret
+	resolver := func(name string) (string, error) {
+		if name == secret.MasterSecretName {
+			return master, nil
+		}
+		return "", fmt.Errorf("no such secret %q", name)
+	}
+
+	cfg := &config.Config{
+		DefaultDestination: "local",
+		Destinations:       map[string]config.Destination{"local": {URL: repoDir}},
+		HostRoots:          map[string]string{srcDir: srcDir},
+		StateDir:           stateDir,
+		Retention:          "last=10", // keep the fresh snapshot; never prune it out from under verify
+	}
+
+	container := runtime.Container{
+		ID:   "itest-src",
+		Name: "itest-src",
+		Labels: map[string]string{
+			"ballast.enable":      "true",
+			"ballast.name":        "e2e-files",
+			"ballast.verify.mode": "files",
+		},
+		Mounts: []runtime.Mount{
+			{Type: runtime.MountBind, Source: srcDir, Destination: "/data"},
+		},
+	}
+
+	// Discover independently for the backup and for the verify, the way the two
+	// commands each run their own discovery pass. A regression that resolves the
+	// same container to different services or repo paths on the two sides surfaces
+	// here as a repo_id or snapshot_id mismatch.
+	backupSpec := discoverOne(t, container, cfg)
+	verifySpec := discoverOne(t, container, cfg)
+
+	rt := runtime.NewDocker(itestSocket)
+	defer rt.Close()
+	eng := engine.NewRestic("")
+
+	if err := orchestrator.RunBackup(context.Background(), backupSpec, orchestrator.Deps{
+		Runtime:  rt,
+		Engine:   eng,
+		Config:   cfg,
+		Resolver: resolver,
+		StateDir: stateDir,
+		HostID:   "h_9c1a2b7e8d4c5f00",
+		Version:  "00.01.00b1",
+		Trigger:  "manual",
+	}); err != nil {
+		t.Fatalf("RunBackup: %v", err)
+	}
+
+	runRec := readLatestRunRecord(t, stateDir, backupSpec.Service)
+	if runRec.SnapshotID == nil || *runRec.SnapshotID == "" {
+		t.Fatalf("backup wrote no snapshot_id in its run record")
+	}
+
+	repo, err := orchestrator.BuildRepo(verifySpec, cfg, resolver)
+	if err != nil {
+		t.Fatalf("BuildRepo for verify: %v", err)
+	}
+	v, err := Run(context.Background(), verifySpec, container, "latest", Deps{
+		Runtime:     rt,
+		Engine:      eng,
+		Repo:        repo,
+		StateDir:    stateDir,
+		HostID:      "h_9c1a2b7e8d4c5f00",
+		Version:     "00.01.00b1",
+		RuntimeName: "docker",
+		Trigger:     "manual",
+		NamePrefix:  "ballast-verify-itest",
+	})
+	if err != nil {
+		t.Fatalf("verify Run: %v", err)
+	}
+	t.Logf("verify result=%s reason=%v repo_id=%s snapshot_id=%v", v.Result, deref(v.Reason), v.RepoID, v.SnapshotID)
+
+	// The #896 core: verify must target the repository the backup wrote and find
+	// its snapshot. A service-resolution mismatch (verify pointed at a repo that
+	// was never backed up) breaks one or both of these.
+	if v.RepoID != runRec.RepoID {
+		t.Errorf("verify repo_id %q != backup repo_id %q: verify targeted a different repository than the backup wrote", v.RepoID, runRec.RepoID)
+	}
+	if v.SnapshotID == nil {
+		t.Fatalf("verify resolved no snapshot: result=%s reason=%v -- the #896 symptom of verifying an un-backed-up service", v.Result, deref(v.Reason))
+	}
+	if *v.SnapshotID != *runRec.SnapshotID {
+		t.Errorf("verify snapshot_id %q != backup snapshot_id %q", *v.SnapshotID, *runRec.SnapshotID)
+	}
+	// With both sides agreeing on repo and snapshot, the files-mode manifest
+	// comparison should pass too; a non-pass here is a real regression.
+	if v.Result != "pass" {
+		t.Errorf("verify did not pass: result=%s reason=%v", v.Result, deref(v.Reason))
+	}
+}
+
+// discoverOne resolves the single BackupSpec for c under cfg, the same
+// translation the CLI's per-container discovery loop applies to each container
+// rt.List returns.
+func discoverOne(t *testing.T, c runtime.Container, cfg *config.Config) *discovery.BackupSpec {
+	t.Helper()
+	spec, _, err := discovery.Discover(c, cfg)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	if spec == nil {
+		t.Fatal("container was not discovered (ballast.enable missing?)")
+	}
+	return spec
+}
+
+// readLatestRunRecord loads the run record the orchestrator wrote for service
+// under stateDir. The itest produces exactly one.
+func readLatestRunRecord(t *testing.T, stateDir, service string) *record.Run {
+	t.Helper()
+	dir := filepath.Join(stateDir, "runs", service)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read run records dir: %v", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		data, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			t.Fatalf("read run record: %v", rerr)
+		}
+		var rr record.Run
+		if err := json.Unmarshal(data, &rr); err != nil {
+			t.Fatalf("unmarshal run record: %v", err)
+		}
+		return &rr
+	}
+	t.Fatalf("no run record written under %s", dir)
+	return nil
 }
 
 // assertNoItestLeftovers fails if any ballast-verify-itest container or network

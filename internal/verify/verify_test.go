@@ -342,6 +342,78 @@ func TestSnapshotMissing(t *testing.T) {
 	}
 }
 
+// --- reason-code classification (#896) ------------------------------------
+
+// baseOnlyRuntime exposes only the core runtime.Runtime method set. A type
+// assertion to runtime.Provisioner or runtime.NetworkInspector against it
+// fails, modelling a runtime built from a wrapper that dropped the optional
+// capabilities. Embedding the interface (not a concrete type) is what keeps the
+// concrete method set narrow.
+type baseOnlyRuntime struct{ runtime.Runtime }
+
+// TestResolveSnapshotErrorNotRuntimeUnavailable pins the #896 fix: a restic
+// repo open/list failure is a backup-engine/repository error, classified
+// "other", and never runtime_unavailable (which names only a missing
+// container-runtime provisioning capability). Reusing runtime_unavailable here
+// is what misdirected #896 triage toward the provisioner.
+func TestResolveSnapshotErrorNotRuntimeUnavailable(t *testing.T) {
+	stateDir := t.TempDir()
+	eng := &fakeEngine{snapsErr: errRepoMissing{}}
+	rt := &fakeRuntime{container: runtime.Container{ID: "abc123def456", Name: "photos"}}
+	spec := baseSpec("photos", discovery.VerifySpec{Mode: discovery.VerifyModeFiles})
+	spec.Paths = []string{"/data"}
+
+	v := mustRun(t, spec, rt.container, baseDeps(eng, rt, stateDir))
+
+	if v.Result != "inconclusive" {
+		t.Fatalf("Result = %q, want inconclusive", v.Result)
+	}
+	if got := deref(v.ReasonCode); got != "other" {
+		t.Fatalf("reason_code = %q, want other", got)
+	}
+	if deref(v.ReasonCode) == "runtime_unavailable" {
+		t.Fatalf("restic repo error misclassified as runtime_unavailable")
+	}
+	// The restic error text is preserved as the reason detail, and no snapshot
+	// was resolved.
+	if v.Reason == nil || !bytesContains(*v.Reason, "repository does not exist") {
+		t.Errorf("reason = %v, want it to carry the restic error text", deref(v.Reason))
+	}
+	if v.SnapshotID != nil {
+		t.Errorf("snapshot_id should be null, got %q", *v.SnapshotID)
+	}
+}
+
+// TestProvisionerAbsentIsRuntimeUnavailable is the contrast case: when the
+// runtime genuinely lacks the Provisioner capability a container/stream verify
+// needs, the reason_code IS runtime_unavailable, and nothing reclassifies it.
+// This is the one site that legitimately owns that code.
+func TestProvisionerAbsentIsRuntimeUnavailable(t *testing.T) {
+	stateDir := t.TempDir()
+	rt := &fakeRuntime{
+		container: runtime.Container{ID: "abc123def456", Name: "app-db"},
+		execs:     streamExecs("417", 0),
+	}
+	deps := baseDeps(streamEngine(), rt, stateDir)
+	deps.Runtime = baseOnlyRuntime{rt} // drop Provisioner and NetworkInspector
+
+	v := mustRun(t, streamSpec("app-db"), rt.container, deps)
+
+	if v.Result != "inconclusive" || deref(v.ReasonCode) != "runtime_unavailable" {
+		t.Fatalf("Result=%q code=%q, want inconclusive/runtime_unavailable", v.Result, deref(v.ReasonCode))
+	}
+	// It failed at the provisioner gate: nothing was restored or checked.
+	if v.RestoreDurationMs != 0 || len(v.Checked) != 0 {
+		t.Errorf("restore_ms=%d checked=%v, want both empty", v.RestoreDurationMs, v.Checked)
+	}
+}
+
+// errRepoMissing mimics restic's "repository does not exist" as returned from
+// Snapshots when the repo was never created (the #896 shape).
+type errRepoMissing struct{}
+
+func (errRepoMissing) Error() string { return "Fatal: unable to open config file: repository does not exist" }
+
 func deref(s *string) string {
 	if s == nil {
 		return "<nil>"
