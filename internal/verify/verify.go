@@ -486,13 +486,16 @@ func (r *run) sweepOrphanScratch(ctx context.Context) {
 
 // resolveSnapshot lists the repository's snapshots and picks the one snapshotReq
 // names: the most recent when "latest", or the one whose id has snapshotReq as a
-// prefix. It records the resolved id and time on the record. On a listing
-// failure it returns runtime/engine-unavailable; on no match it returns
+// prefix. It records the resolved id and time on the record. A listing failure
+// is a backup-engine/repository error (the repository could not be listed or
+// opened), classified "other" -- deliberately NOT "runtime_unavailable", which
+// names only a missing container-runtime provisioning capability and misdirected
+// #896 triage when a restic repo-open error borrowed it. On no match it returns
 // snapshot_missing. ok is true only when a snapshot was resolved.
 func (r *run) resolveSnapshot(snapshotReq string) (engine.Snapshot, bool) {
 	snaps, err := r.d.Engine.Snapshots(r.vctx, r.d.Repo)
 	if err != nil {
-		code := r.ctxReasonCode(err, "other", "runtime_unavailable")
+		code := r.ctxReasonCode(err, "other", "other")
 		r.inconclusive(code, fmt.Sprintf("list snapshots: %v", err))
 		return engine.Snapshot{}, false
 	}
