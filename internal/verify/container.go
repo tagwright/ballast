@@ -98,7 +98,9 @@ func (r *run) runContainer() {
 		return
 	}
 	r.addNetworkTeardown(prov, netID)
-	r.confirmIsolated(netName)
+	if !r.confirmIsolated(netName) {
+		return
+	}
 
 	// Create one fresh scratch volume per service volume, mounted at the same
 	// destination the real service uses.

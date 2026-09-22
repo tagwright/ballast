@@ -159,9 +159,16 @@ Field by field (see the schema for exact types and the null rules):
   10m default), or the `ballast verify --timeout` override when one was given.
 - `environment` records where the restore ran: `{kind: scratch-dir |
   throwaway-container, location, image, network, network_isolated}`.
-  `network_isolated` is the segregation fact, recorded `true` because a
-  throwaway container is always placed on an internal network (confirmed via
-  the runtime's network inspector).
+  `network_isolated` is the segregation fact. On a throwaway-container record it
+  is a verified attestation, not an assumption: the throwaway is always placed
+  on an internal network, and the runtime's network inspector confirms the
+  created network reports internal before the verify proceeds. `true` means that
+  confirmation succeeded; `false` means the network was positively observed to
+  be non-internal. If isolation cannot be confirmed at all (the runtime lacks
+  the network-inspector capability, the network listing fails, or the created
+  network is not found), the verify is recorded `inconclusive` rather than
+  asserting an unverified `true` -- an unconfirmed segregation fact never rides
+  as `true` on a passing record.
 - `started_at`, `finished_at`, and the three `*_duration_ms` fields time the
   verify; the total is judged for RTO and the parts (restore, probe) for
   tuning.

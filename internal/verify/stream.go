@@ -94,7 +94,9 @@ func (r *run) runStreamRestore() {
 		return
 	}
 	r.addNetworkTeardown(prov, netID)
-	r.confirmIsolated(netName)
+	if !r.confirmIsolated(netName) {
+		return
+	}
 
 	contID, err := prov.CreateContainer(r.vctx, runtime.ContainerSpec{
 		Name:    name,

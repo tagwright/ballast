@@ -85,19 +85,38 @@ func (r *run) addVolumeTeardown(prov runtime.Provisioner, name string) {
 	})
 }
 
-// confirmIsolated verifies the created network reports Internal via the
-// NetworkInspector capability, downgrading the record's network_isolated to
-// false only if it can positively see a non-internal network. CreateNetwork
-// always creates an internal network, so this is a defence-in-depth check that
-// the segregation fact recorded is real, not an assumption.
-func (r *run) confirmIsolated(netName string) {
+// confirmIsolated checks, via the NetworkInspector capability, that the
+// throwaway network the verify created reports Internal, so the record's
+// network_isolated attestation is a verified fact rather than an assumption.
+// CreateNetwork always creates an internal network, so a positive confirmation
+// is the expected case; this is the defence-in-depth check that it really
+// happened.
+//
+// It returns proceed=true when the run may continue: either the network is
+// positively internal (isolation confirmed) or it is positively NOT internal
+// (isolation refuted -- network_isolated is set false, logged loudly, and the
+// honest fact rides on the record). It returns proceed=false when isolation
+// could not be confirmed AT ALL -- the runtime lacks NetworkInspector, the
+// network listing failed, or the created network was not found. An unconfirmed
+// isolation is recorded inconclusive rather than left as the preset true: this
+// is a DORA-style segregation attestation, and the package's rule is that an
+// unconfirmed fact never rides as true on a passing compliance record. The
+// caller must return without asserting a pass when proceed is false.
+//
+// It never sets network_isolated=false on an unconfirmed check: that would
+// assert "not isolated", a different and equally untrue claim. False is set
+// only when a network is positively observed to be non-internal.
+func (r *run) confirmIsolated(netName string) (proceed bool) {
 	insp, ok := r.d.Runtime.(runtime.NetworkInspector)
 	if !ok {
-		return
+		r.inconclusive("other", "cannot confirm throwaway network isolation: runtime does not support network inspection")
+		return false
 	}
 	nets, err := insp.ListNetworks(r.vctx)
 	if err != nil {
-		return
+		code := r.ctxReasonCode(err, "other", "other")
+		r.inconclusive(code, fmt.Sprintf("cannot confirm throwaway network isolation: list networks: %v", err))
+		return false
 	}
 	for _, n := range nets {
 		if n.Name == netName {
@@ -106,9 +125,11 @@ func (r *run) confirmIsolated(netName string) {
 				r.log.Error("verify: throwaway network is not internal; refusing to claim isolation",
 					"service", r.spec.Service, "network", netName)
 			}
-			return
+			return true
 		}
 	}
+	r.inconclusive("other", fmt.Sprintf("cannot confirm throwaway network isolation: created network %q not found", netName))
+	return false
 }
 
 // assertContainerProbe runs the declared probe inside the throwaway container
