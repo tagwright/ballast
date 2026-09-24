@@ -25,17 +25,17 @@ Three layers, in increasing order of how much they actually prove:
    anything else on the host, and is torn down in a trap on exit (success,
    failure, or interrupt). Eighteen scripts today:
 
-   - `run.sh` — filesystem backup/restore against a local repo, plus a
+   - `run.sh`: filesystem backup/restore against a local repo, plus a
      daemon scheduler smoke test (`@every 1m`, confirmed to fire a second
      scheduled backup on its own).
-   - `run-stream.sh` — the docker-exec-stdout-piped-into-`restic --stdin`
+   - `run-stream.sh`: the docker-exec-stdout-piped-into-`restic --stdin`
      path: a real Postgres container, a `ballast.stream.db.*` labeled dump,
      restore, and a failure-path check that a bogus dump command leaves no
      snapshot behind.
-   - `run-s3.sh` — the restic S3 backend against a local MinIO standing in
+   - `run-s3.sh`: the restic S3 backend against a local MinIO standing in
      for Cloudflare R2 (see the R2 note below), including the
      `destination.env` → child-process-env → restic credential path.
-   - `run-retention.sh` — forces five real backups of a `ballast.retention.
+   - `run-retention.sh`: forces five real backups of a `ballast.retention.
      last=3` labeled service and asserts the *exact* surviving snapshot set
      (not just a count), then runs a real daemon with short
      `BALLAST_PRUNE_SCHEDULE`/`BALLAST_CHECK_SCHEDULE` intervals and confirms
@@ -43,7 +43,7 @@ Three layers, in increasing order of how much they actually prove:
      then runs `restic check --read-data` directly against the repository.
      See the Retention/Prune/Check section below for exactly what this does
      and does not prove.
-   - `run-hooks.sh` — `ballast.exec.pre`/`ballast.exec.post`, gated by
+   - `run-hooks.sh`: `ballast.exec.pre`/`ballast.exec.post`, gated by
      `BALLAST_ENABLE_EXEC`: both hooks write a distinct marker file into the
      volume being backed up; a `docker exec` after the run confirms both
      actually ran inside the container, and restoring the snapshot proves
@@ -51,13 +51,13 @@ Three layers, in increasing order of how much they actually prove:
      not, because the filesystem backup step runs strictly between the
      two). A second service with a non-zero `exec.pre` proves the run
      aborts with no snapshot written while `exec.post` still runs.
-   - `run-stop.sh` — `ballast.stop=true`, gated by `BALLAST_ENABLE_STOP`:
+   - `run-stop.sh`: `ballast.stop=true`, gated by `BALLAST_ENABLE_STOP`:
      `docker events` watched across a real backup confirms the container
      was actually stopped (`die`) and started again (`start`), in that
      order, a fresh `State.StartedAt` confirms the restart, and the
      snapshot taken while stopped restores byte-for-byte. Also confirms
      discovery rejects `stop=true` combined with a stream backup.
-   - `run-notify.sh` — a real `binwiederhier/ntfy` server and a
+   - `run-notify.sh`: a real `binwiederhier/ntfy` server and a
      `notifications: [{type: ntfy, ...}]` config, proving config →
      `daemon.BuildNotifier` → `orchestrator.reportOutcome` → beacon → an
      actual message landing in the topic (title, body, and ntfy priority
@@ -65,7 +65,7 @@ Three layers, in increasing order of how much they actually prove:
      `ballast.notify.suppress=true` produces no message, and that
      `ballast.notify.on-success=true` escalates a successful backup's
      message to Warning-level (ntfy priority 4).
-   - `run-watch.sh` — the daemon's live socket-event watch path
+   - `run-watch.sh`: the daemon's live socket-event watch path
      (`internal/daemon/watch.go`'s `watchLoop`), the one path every prior
      script left unproven since they all only exercise startup discovery
      (`discoverAll`, run once before the watch loop even starts). A real
@@ -76,7 +76,7 @@ Three layers, in increasing order of how much they actually prove:
      confirmed by the `daemon: service unregistered` log line this pass
      added (see "Bugs found and fixed" below), and a full schedule interval
      afterward confirms no further backup fires.
-   - `run-splay.sh` — three services on the daemon's global schedule,
+   - `run-splay.sh`: three services on the daemon's global schedule,
      proving `Concurrency=1` (the grammar's default) actually serializes
      overlapping backups rather than merely being documented to: each
      service's `exec.pre` sleeps 5 seconds and writes a whole-second start
@@ -86,7 +86,7 @@ Three layers, in increasing order of how much they actually prove:
      of the claim (that a fleet on the same period alias lands on different
      slots) is proven separately at the unit level, since a real `@daily`
      wait is impractical for a live itest.
-   - `run-volumes.sh` — multi-volume backup and narrowing
+   - `run-volumes.sh`: multi-volume backup and narrowing
      (`internal/discovery/volumes.go`), never exercised end to end before
      (only `ballast.volumes=none` had been, via `run-stream.sh`): a service
      with two named volumes backs up both; `ballast.volumes=<name>` narrows
@@ -97,43 +97,43 @@ Three layers, in increasing order of how much they actually prove:
      directory's contents (per restic's documented behavior, the tag file
      and the now-empty directory itself survive) from the restored
      snapshot.
-   - `run-dupe.sh` — two containers resolving to the same service name via
+   - `run-dupe.sh`: two containers resolving to the same service name via
      `ballast.name`, proving `internal/daemon/registry.go`'s duplicate-
      service-name rejection live: the daemon logs the rejection of the
      second container, keeps running (no crash), and the latest snapshot
      after another full schedule round still only ever contains the first
      container's data, not a silent double-backup.
-   - `run-alias.sh` — a service labeled entirely under `tagwright.backup.*`
+   - `run-alias.sh`: a service labeled entirely under `tagwright.backup.*`
      (no `ballast.*` label at all): a real backup, a snapshot listing
      confirming `tagwright.backup.tags` reached the snapshot, and a restore,
      proving the org-namespaced alias works identically to `ballast.*` end
      to end, not just at the unit level.
-   - `run-conflict.sh` — a container labeling the same suffix differently
+   - `run-conflict.sh`: a container labeling the same suffix differently
      under both prefixes (`ballast.repo=A` vs `tagwright.backup.repo=B`):
      rejected by the daemon's discovery pass (logged, never backed up, no
      crash) and by `ballast backup <service>`, which (after this pass's fix,
      see "Bugs found and fixed" below) surfaces the real conflict instead of
      a misleading "not found".
-   - `run-password-secret.sh` — `ballast.password-secret=<name>`: a real
+   - `run-password-secret.sh` covers `ballast.password-secret=<name>`: a real
      backup + restore round-trip through the named secret, plus the actual
      proof (not just the round-trip, which would also pass if the override
      silently did nothing): shelling out directly to the same restic binary
      Ballast bundles, the master-key-derived password (`ballast key`) is
      confirmed to **not** open the repository, while the named secret's own
      value does.
-   - `run-repo-path.sh` — `ballast.repo.path=<subpath>`: a real backup
+   - `run-repo-path.sh` exercises `ballast.repo.path=<subpath>`: a real backup
      lands at the overridden sub-path on the host-visible repos directory
      (a real restic `config` object found there), and explicitly does
      **not** exist at the default, un-overridden service-name path;
      restore then round-trips through the same override.
-   - `run-sftp.sh` — the restic SFTP backend against a throwaway
+   - `run-sftp.sh`: the restic SFTP backend against a throwaway
      `atmoz/sftp` server on a `ballast-itest-net` user network: a real
      `sftp:user@host:path` destination, key-based auth via a fresh
      itest-only keypair, a real backup confirmed to have landed on the
      SFTP server's own filesystem (independent of Ballast's view), and a
      restore that byte-matches the canary. Found a real production gap
-     doing this — see "Bugs found and fixed" below.
-   - `run-retention-time.sh` — not a container itest like the sixteen
+     doing this. See "Bugs found and fixed" below.
+   - `run-retention-time.sh` is not a container itest like the sixteen
      above: it runs `internal/engine`'s `TestForgetKeepDailyTimeBased`
      (build-tag `integration`) inside a throwaway `golang:1.25` + `restic`
      container, seeding a repository with snapshots at controlled synthetic
@@ -141,7 +141,7 @@ Three layers, in increasing order of how much they actually prove:
      `engine.Restic.Forget` code path with `RetentionPolicy{Daily: 3}`. See
      the "Retention / forget, time-based" row below for exactly what this
      proves and does not.
-   - `run-ensurerepo-guard.sh` — also an engine-level test, not a container
+   - `run-ensurerepo-guard.sh` is also an engine-level test, not a container
      itest: it runs `internal/engine`'s `TestEnsureRepoGuard` (build-tag
      `integration`) inside a throwaway `golang:1.25` + `restic` container,
      driving `engine.Restic.EnsureRepo` against a real restic repository to
@@ -150,15 +150,15 @@ Three layers, in increasing order of how much they actually prove:
      refuses the init (the vanished-destination regression from #231) gets
      that error surfaced and leaves no fresh repository behind. See the
      "Repository auto-init guard" row below.
-   - `run-podman.sh` — the Podman adapter (now `github.com/tagwright/core/runtime/podman.go`, moved out of ballast's embedded `pkg/runtime`) against
+   - `run-podman.sh`: the Podman adapter (now `github.com/tagwright/core/runtime/podman.go`, moved out of ballast's embedded `pkg/runtime`) against
      a real Podman socket, not just a compile check, the first itest to do
      so. Stands up its own throwaway, self-contained nested Podman (a
      privileged `quay.io/podman/stable` container running Podman's
      Docker-compatible compat API service on a socket shared with the
      `ballast:itest` container via a Docker-managed named volume, not a
      host bind-mount path, since this harness can itself run inside a
-     container whose filesystem is not the Docker host's) — no dependency
-     on a Podman install on the host running it. Proves filesystem
+     container whose filesystem is not the Docker host's), so there is no
+     dependency on a Podman install on the host running it. Proves filesystem
      backup/restore byte-diffed against the real socket; the
      `io.podman.compose.*` compose-identity fallback (the test container
      carries no `com.docker.compose.*` pair at all, so a `project=...`
@@ -166,13 +166,13 @@ Three layers, in increasing order of how much they actually prove:
      Docker-compat-label preference branch); the daemon's live watch loop
      discovering a container via a real Podman "start" event and firing a
      scheduled backup for it; and a regression check for a real bug found
-     running against the live socket for the first time — see "Bugs found
+     running against the live socket for the first time. See "Bugs found
      and fixed" below.
 
    See `test/integration/README.md` for how to run each one.
 
 3. **Deliberately manual.** A few things are exercised by hand rather than
-   by an automated harness, noted individually in the matrix below — mostly
+   by an automated harness, noted individually in the matrix below, mostly
    because they need a real external account (Cloudflare R2) or a real
    notification backend's live endpoint that isn't self-hostable the way
    ntfy is (an actual Discord webhook, SMTP relay, or Gatus instance),
@@ -244,17 +244,17 @@ alone in the PRIOR pass before this one resolved it.
 
 Categories, precisely:
 
-- **Integration-proven** — a `test/integration/*.sh` run has actually
+- **Integration-proven**: a `test/integration/*.sh` run has actually
   exercised this against live Docker, a real `restic` binary, and (where
   relevant) a real backend, and asserted a real outcome (byte-for-byte
   restore, an object landing in a bucket, a run aborting correctly).
-- **Unit-tested** — covered by `go test`, no live socket or external
+- **Unit-tested**: covered by `go test`, no live socket or external
   service involved.
-- **Compile-only** — the code builds and type-checks (every `docker build`
+- **Compile-only**: the code builds and type-checks (every `docker build`
   in this repo's CI proves that much), and typically shares code paths with
   something that IS integration-proven, but the path itself has never
   actually run.
-- **Not yet tested** — no test of any kind touches it today.
+- **Not yet tested**: no test of any kind touches it today.
 
 | Capability / path | Status | Notes |
 |---|---|---|
@@ -265,26 +265,26 @@ Categories, precisely:
 | Splay-slot distinctness across a fleet (same period alias, different names) | **Unit-tested** | `internal/schedule/schedule_test.go`'s `TestDailySplayDistinctAcrossThreeServices` (three real service names, pairwise-distinct `@daily` slots), extending the existing pairwise `@hourly` test to a small fleet. A real `@daily` wait is impractical for a live itest. |
 | `Splay`'s on/off toggle (`BALLAST_SPLAY`) | **Unit-tested** | Was inert (parsed, never read) before this pass -- see "Splay, fixed" under "Bugs found and fixed" below. Now: `internal/config/config_test.go` proves `Load` defaults `Splay` to true (a nil `*bool`, not the bool zero value) and honors an explicit `BALLAST_SPLAY=false`/`splay: false`; `internal/schedule/scheduler_test.go`'s `TestNewDefaultsSplayOnWhenNil`/`TestNewHonorsExplicitSplayFalse` prove `Scheduler` actually reads it; `internal/schedule/schedule_test.go`'s `TestSplayFalse*` prove `Parse(..., splay=false)` lands `@daily`/`@hourly` on the canonical, unsplayed boundary instead of a job-name-derived slot. No live itest: the distinction only matters for a real `@daily`/`@hourly` wait, which the existing splay-slot-distinctness gap above already rules out as impractical here. |
 | `host_roots` default volume resolution | **Unit-tested + Integration-proven** | Unit: `internal/discovery/volumes_test.go` (default Docker volumes root, and a user `host_roots` entry merging with it rather than replacing it). Integration: every fs-backup itest run (`run.sh`, `run-s3.sh`) resolves a named volume with zero `host_roots` configuration, exactly the "add one label" README claim. |
-| HKDF password derivation (`internal/secret/derive.go`) | **Unit-tested (golden value) + Integration-proven (indirectly)** | Unit: `internal/secret/derive_test.go`'s `TestDeriveRepoPasswordGoldenValues` pins `DeriveRepoPassword`'s output for a fixed master and three service names against exact base64 strings computed once with this code and hardcoded as constants — this is the tripwire the doc comment's "frozen v1 contract" warning asked for: a regression in the salt, info template, output length, or encoding fails this test immediately instead of silently orphaning every repository. `TestDeriveRepoPasswordDeterministic` and `TestDeriveRepoPasswordDistinctPerService` cover the two properties `ballast key <service>` depends on (same input always reproduces the same password; different service names never collide). `TestLoadMasterRejectsShortMaster` / `TestLoadMasterAcceptsMinimumLength` pin the `minMasterKeyBytes` (32) boundary on both sides. Integration: every itest backup+restore round trip only works if the same derivation reproduces the same password at write and read time, which has succeeded across all four itest suites. |
+| HKDF password derivation (`internal/secret/derive.go`) | **Unit-tested (golden value) + Integration-proven (indirectly)** | Unit: `internal/secret/derive_test.go`'s `TestDeriveRepoPasswordGoldenValues` pins `DeriveRepoPassword`'s output for a fixed master and three service names against exact base64 strings computed once with this code and hardcoded as constants. This is the tripwire the doc comment's "frozen v1 contract" warning asked for: a regression in the salt, info template, output length, or encoding fails this test immediately instead of silently orphaning every repository. `TestDeriveRepoPasswordDeterministic` and `TestDeriveRepoPasswordDistinctPerService` cover the two properties `ballast key <service>` depends on (same input always reproduces the same password; different service names never collide). `TestLoadMasterRejectsShortMaster` / `TestLoadMasterAcceptsMinimumLength` pin the `minMasterKeyBytes` (32) boundary on both sides. Integration: every itest backup+restore round trip only works if the same derivation reproduces the same password at write and read time, which has succeeded across all four itest suites. |
 | Label discovery / parsing (`internal/discovery`) | **Unit-tested + Integration-proven** | Unit: default host-roots merge, `ballast.notify.*` labels including the `tagwright.backup.*` alias, the prefix-conflict error carrying a usable spec (`TestDiscoverPrefixConflictReturnsSpecAlongsideError`), and the global `exclude` list merging with a service's own (`TestDiscoverGlobalExcludeMergesWithLabel`). Integration: `ballast.enable`, `ballast.repo`, `ballast.volumes=none`, and `ballast.stream.<id>.*` end to end (`run-stream.sh`); named-volume mount discovery (`run.sh`, `run-s3.sh`); `ballast.volumes`/`ballast.volumes.exclude` narrowing, `ballast.exclude`, and `ballast.exclude-caches` (`run-volumes.sh`); `ballast.name` service-identity override and the duplicate-service-name rejection rule (`run-dupe.sh`); the `tagwright.backup.*` alias end to end including `tags` and `retention.last` (`run-alias.sh`); the `ballast.*`/`tagwright.backup.*` conflict-rejection rule via both the daemon and the CLI (`run-conflict.sh`); `ballast.password-secret` (`run-password-secret.sh`); and `ballast.repo.path` (`run-repo-path.sh`). Still not covered by any test: individual `retention.hourly`/`.weekly`/`.monthly`/`.yearly`/`.within`/`.keep-tags` label parsing beyond `retention.last` (`retention.daily`'s *outcome* is proven, but not from a label -- see the retention rows above), and the indexed `exclude.<n>` escape hatch (only the CSV `exclude` form has run). |
 | Stream / DB-dump path (exec → `restic backup --stdin`) | **Integration-proven** | `run-stream.sh`: a real Postgres `pg_dump` piped through docker exec into restic, restored, and diffed against the original schema + canary row. Also proves the `BALLAST_ENABLE_EXEC` gate and `stream=<id>` snapshot tagging. |
-| Stream dump failure path | **Integration-proven** | `run-stream.sh`: a bogus `stream.<id>.command` (`false`) makes the backup abort with a non-zero exit and leaves **no snapshot** behind. This was not true before this test suite found it — see the "Bug found and fixed" section below. |
+| Stream dump failure path | **Integration-proven** | `run-stream.sh`: a bogus `stream.<id>.command` (`false`) makes the backup abort with a non-zero exit and leaves **no snapshot** behind. This was not true before this test suite found it. See the "Bug found and fixed" section below. |
 | S3 backend + credential passing | **Integration-proven (via MinIO)** | `run-s3.sh`: a local MinIO stands in for the S3-compatible endpoint; the destination's `env` map resolves through the same secret → child-process-env → restic path a real S3-compatible destination uses, and the backup, snapshot listing, and restore all work against it, with objects confirmed present in the bucket. |
-| Real Cloudflare R2 | **Not yet tested — requires operator credentials** | R2 is just an S3-compatible endpoint from restic's point of view; MinIO exercises the identical code path (`internal/engine/restic.go`'s `childEnv`, the `s3:` URL scheme, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env). What MinIO cannot prove: R2-specific network/auth behavior (real TLS endpoint, real R2 account restrictions, R2's actual latency/throughput characteristics). Someone with real R2 credentials should run a manual backup/restore against a throwaway R2 bucket before depending on this in production. |
+| Real Cloudflare R2 | **Not yet tested (requires operator credentials)** | R2 is just an S3-compatible endpoint from restic's point of view; MinIO exercises the identical code path (`internal/engine/restic.go`'s `childEnv`, the `s3:` URL scheme, `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env). What MinIO cannot prove: R2-specific network/auth behavior (real TLS endpoint, real R2 account restrictions, R2's actual latency/throughput characteristics). Someone with real R2 credentials should run a manual backup/restore against a throwaway R2 bucket before depending on this in production. |
 | SFTP backend | **Integration-proven** | `run-sftp.sh`: a throwaway `atmoz/sftp` server, key-based auth via a fresh itest-only Ed25519 keypair, `strict host-key checking disabled` (a real deployment should pin the real server's host key instead -- this is a throwaway itest server whose host key is regenerated every run). Found and fixed a real production gap: the shipped image had no `ssh` binary, and restic's sftp backend execs one to open the connection -- an `sftp:` destination was accepted as config but every operation against it would have failed with "executable file not found in $PATH". See "SFTP backend needs an ssh client, fixed" below. |
 | `ballast.password-secret` override | **Integration-proven** | `run-password-secret.sh`: a real backup + restore round-trips through a service's named secret, and -- the part a mere round-trip can't prove, since it would also pass if the override silently did nothing -- direct `restic` invocations (same binary Ballast bundles) confirm the master-key-derived password (`ballast key`) does **not** open the repository while the named secret's own value does. |
 | `ballast.repo.path` override | **Integration-proven** | `run-repo-path.sh`: a real backup lands at the overridden sub-path on the host-visible repos directory (a real restic `config` object found there) and explicitly does **not** exist at the default, un-overridden service-name path; restore round-trips through the same override. |
-| Retention / forget, count-based (`keep-last`) | **Integration-proven, outcome asserted** | `run-retention.sh`: a service labeled `ballast.retention.last=3` is backed up five times (each real backup also runs `Forget` with that policy, exactly as production does — see `runBackupSteps`). The script records the snapshot ID each run produces and asserts the final surviving set is *exactly* the 3 newest (iterations 3, 4, 5), i.e. that `keep-last` forgets the right snapshots, not merely that `forget` exits 0. |
-| Retention / forget, time-based, `keep-daily` specifically | **Integration-proven, at the engine level** | `run-retention-time.sh` runs `internal/engine/forget_time_itest_test.go`'s `TestForgetKeepDailyTimeBased` (build-tag `integration`) inside a throwaway container: `restic backup --time` seeds six snapshots across five distinct calendar days (two on one day, to prove the same-day-keeps-only-the-newest bucketing rule, not just a count), then the real `engine.Restic.Forget` — called through the `Engine` interface exactly as `internal/orchestrator/backup.go`'s `runBackupSteps` calls it — is applied with `RetentionPolicy{Daily: 3}`, and the exact surviving snapshot set is asserted by ID (the three most recent distinct days; the earlier of the two same-day snapshots is confirmed forgotten). This is at the engine level, not through Ballast's own CLI, because `BackupRequest` has no way to backdate a snapshot (nor should it) — see the file's own doc comment. |
+| Retention / forget, count-based (`keep-last`) | **Integration-proven, outcome asserted** | `run-retention.sh`: a service labeled `ballast.retention.last=3` is backed up five times (each real backup also runs `Forget` with that policy, exactly as production does, see `runBackupSteps`). The script records the snapshot ID each run produces and asserts the final surviving set is *exactly* the 3 newest (iterations 3, 4, 5), i.e. that `keep-last` forgets the right snapshots, not merely that `forget` exits 0. |
+| Retention / forget, time-based, `keep-daily` specifically | **Integration-proven, at the engine level** | `run-retention-time.sh` runs `internal/engine/forget_time_itest_test.go`'s `TestForgetKeepDailyTimeBased` (build-tag `integration`) inside a throwaway container: `restic backup --time` seeds six snapshots across five distinct calendar days (two on one day, to prove the same-day-keeps-only-the-newest bucketing rule, not just a count), then the real `engine.Restic.Forget` (called through the `Engine` interface exactly as `internal/orchestrator/backup.go`'s `runBackupSteps` calls it) is applied with `RetentionPolicy{Daily: 3}`, and the exact surviving snapshot set is asserted by ID (the three most recent distinct days; the earlier of the two same-day snapshots is confirmed forgotten). This is at the engine level, not through Ballast's own CLI, because `BackupRequest` has no way to backdate a snapshot (nor should it). See the file's own doc comment. |
 | Retention / forget, time-based, `keep-hourly`/`keep-weekly`/`keep-monthly`/`keep-yearly`/`keep-within` | **Not asserted** | `keep-daily` is now proven at the engine level (row above); the other five time-based dimensions share the identical `internal/engine/restic.go` `Forget` code path (one `restic forget` invocation built from whichever `--keep-*`/`--keep-within` flags the policy sets) and the identical `TestForgetKeepDailyTimeBased` harness could extend to them, but nothing does yet. This is a smaller, more theoretical gap than before this pass (the code path itself is now exercised, just not every dimension of it), but still a real one. |
 | Prune | **Integration-proven** | `run-retention.sh`: after the keep-last forget above has actually removed data, a real daemon with a short `BALLAST_PRUNE_SCHEDULE` runs prune (`internal/daemon/maintenance.go`'s scheduled path, the same one production uses) and the script confirms from the daemon's own logs that it completed with no error, then re-lists snapshots to confirm the repository is still valid (all 3 survivors still present) afterward. |
 | Check | **Integration-proven, including `--read-data`** | `run-retention.sh`: the daemon's `BALLAST_CHECK_SCHEDULE` path runs `Check(ctx, repo, false)` (matching `maintenance.go`, which hardcodes `readData=false` for the scheduled path) and the script confirms a clean completion from the daemon logs. Separately, since no CLI command or schedule ever passes `readData=true`, the script also shells out directly to the same `restic` binary bundled in `ballast:itest` and runs `restic check --read-data` against the same repository (using the password `ballast key` derives), confirming "no errors were found" against real pack data. |
 | Repository auto-init guard (`EnsureRepo`, #231) | **Unit-proven (decision logic) + integration-proven (engine behavior)** | The decision is unit-tested without restic: `record.CountSuccessfulRuns` (counts only exit-0 run records under `state_dir/runs/<service>/`, skips failures and unparseable files, treats a missing dir as zero) and `orchestrator.guardAutoInit` (prior successful runs plus an uninitialized destination → a regression error; no history or no `state_dir` → nil, i.e. auto-init as before). The engine behavior is integration-proven by `run-ensurerepo-guard.sh` / `TestEnsureRepoGuard` (build-tag `integration`) against a real restic repository: a new service (nil guard) auto-initializes, and a service whose `Repo.GuardInit` refuses gets that error surfaced verbatim with **no fresh repository created** (asserted by the absence of restic's `config` object on disk). The full production wiring (`orchestrator.RunBackup` building the guard from `d.StateDir`+`spec.Service`, its error riding `reportOutcome` → `beacon.LevelError`) is not yet exercised by a live-daemon itest. **Accepted gap**: the guard's signal is `state_dir` run records, so a catastrophe wiping BOTH the destination AND `state_dir` cannot be caught (a previously-backed-up service then looks new); `state_dir` is a persistent named volume in the deployment for exactly this reason. |
 | Notification channels actually firing | **Integration-proven (ntfy, end to end through Ballast's own orchestrator) + not yet tested (discord/smtp/webhook)** | `run-notify.sh`: a real `binwiederhier/ntfy` server, a `notifications` channel pointed at it in `notify.itest.yml`, and three real `ballast backup` runs. This is the one itest that exercises the *whole* path other suites don't: `config.ChannelConfig` → `daemon.BuildNotifier` → `orchestrator.reportOutcome` → `beacon.Beacon.Notify` → a real HTTP POST → a message actually readable back from ntfy's own JSON poll API, with title, body, and priority all asserted. Also proves the per-service controls: `ballast.notify.suppress=true` produces no message at all, and `ballast.notify.on-success=true` raises a successful backup's message from ntfy priority 3 (default/`LevelInfo`) to 4 (high/`LevelWarning`). Every other itest still configures no `notifications` at all, so beacon's built-in `log` fallback fires there instead; `discord`, `smtp`, and `webhook` backends remain untested from Ballast's side (they live in the `github.com/tagwright/beacon` module and need a live external endpoint or account this harness doesn't have). |
 | Gatus telemetry sink | **Not yet tested** | Same boundary as the other notification backends: lives in beacon, needs a real Gatus push-URL target. No itest configures `telemetry`. |
-| Exec pre/post hooks (`ballast.exec.pre`/`.post`) | **Integration-proven (pre-hook path) + partially unproven (post-hook failure path)** | `run-hooks.sh`: a service with both `exec.pre` and `exec.post` labels, each writing a distinct marker file into the volume being backed up. `docker exec` after the run confirms both hooks actually executed inside the container; restoring the resulting snapshot proves the ordering directly (the pre-marker is present in the snapshot, the post-marker is not, because `RunBackup`'s filesystem-backup step runs strictly between the two hooks), which is a stronger proof than a timestamp comparison would be. A second service with a non-zero `exec.pre` confirms the run aborts with **no snapshot written**, and that `exec.post` still runs regardless (`docker exec` confirms its own marker). **Not proven**: `orchestrator.RunBackup`'s doc-commented claim that a non-zero `exec.post` "only warns" rather than aborting or failing the command — no itest gives `exec.post` a failing command, only a succeeding one. `exec.pre`/`exec.post`'s `.timeout`/`.user` sub-labels are also unexercised. |
-| Stop-for-consistency (`ballast.stop`, `BALLAST_ENABLE_STOP`) | **Integration-proven** | `run-stop.sh`: a `ballast.stop=true` labeled service. `docker events` watched across a real `ballast backup` confirms the container actually received a `die` event (stopped) followed by a `start` event (restarted), in that order; `docker inspect`'s `State.StartedAt` confirms a genuinely fresh start, not merely "still running"; and the snapshot the backup wrote restores byte-for-byte. Also confirms discovery's grammar rejects `stop=true` combined with a stream backup as incompatible (found a real bug doing this — see "Bugs found and fixed" below). **Not proven**: a direct concurrent-write race (i.e. that data really can't change mid-backup while stopped) — the test container has no writer process to race against, so this is still resting on `runBackupSteps`' code structure (fs backup runs strictly inside the stop/defer-start closure) rather than an empirical race demonstration. Also unproven: the `defaultStopTimeoutSeconds` (30s) SIGKILL-after-timeout fallback path itself — the test container responds to `SIGTERM` immediately (`--init` + `exec sleep`), so only the graceful-stop path has actually run. |
-| Podman adapter | **Integration-proven (compat API core paths) + partially unproven (see below)** | `run-podman.sh`: a real Podman 5.8 compat API socket (a self-contained nested Podman this itest stands up itself), driving `List`/`Inspect`/`Exec`/`Stop`/`Start`/`Watch` for real through `PodmanRuntime`'s shared `engineClient`. Proven: filesystem backup/restore byte-diffed against the real socket; the `io.podman.compose.*` compose-identity fallback (`podmanComposeIdentity`), specifically its no-`com.docker.compose.*`-present branch, via a real snapshot tag; the daemon's live `Watch` loop discovering a container via a real "start" event and firing a scheduled backup; and `Watch`'s "die or destroy" unregistration path, including the real bug this pass found and fixed (see "Bugs found and fixed" below). **Still not proven**: `Exec` against Podman (no itest here backs up a service via the exec/stream path, e.g. a DB dump, against Podman — only the filesystem-backup path, which never calls `Exec`); `Stop`/`Start` against Podman (no itest sets `ballast.stop=true` against a Podman-backed service, the way `run-stop.sh` does for Docker); the rootless per-user socket default (`defaultPodmanSocket`'s `XDG_RUNTIME_DIR`/`/run/user/<uid>` branches) and the rootful-default branch — this itest always passes an explicit `BALLAST_SOCKET`, so `NewPodman`'s own default-resolution logic has never executed under test, only been read; and `CONTAINER_HOST` env-var socket resolution (`internal/daemon`/`internal/cli`'s `podmanSocket`), which `run-podman.sh` also bypasses via the same explicit `BALLAST_SOCKET`. Also structurally unprovable by any itest here, and worth stating plainly: `engineClient.clientFor` hardcodes `"unix://"+socket` for both adapters, so a Podman deployment whose API is only reachable over TCP (no local socket at all) cannot be pointed at with `BALLAST_SOCKET` today — this is a real adapter limitation, not merely an untested path. |
+| Exec pre/post hooks (`ballast.exec.pre`/`.post`) | **Integration-proven (pre-hook path) + partially unproven (post-hook failure path)** | `run-hooks.sh`: a service with both `exec.pre` and `exec.post` labels, each writing a distinct marker file into the volume being backed up. `docker exec` after the run confirms both hooks actually executed inside the container; restoring the resulting snapshot proves the ordering directly (the pre-marker is present in the snapshot, the post-marker is not, because `RunBackup`'s filesystem-backup step runs strictly between the two hooks), which is a stronger proof than a timestamp comparison would be. A second service with a non-zero `exec.pre` confirms the run aborts with **no snapshot written**, and that `exec.post` still runs regardless (`docker exec` confirms its own marker). **Not proven**: `orchestrator.RunBackup`'s doc-commented claim that a non-zero `exec.post` "only warns" rather than aborting or failing the command. No itest gives `exec.post` a failing command, only a succeeding one. `exec.pre`/`exec.post`'s `.timeout`/`.user` sub-labels are also unexercised. |
+| Stop-for-consistency (`ballast.stop`, `BALLAST_ENABLE_STOP`) | **Integration-proven** | `run-stop.sh`: a `ballast.stop=true` labeled service. `docker events` watched across a real `ballast backup` confirms the container actually received a `die` event (stopped) followed by a `start` event (restarted), in that order; `docker inspect`'s `State.StartedAt` confirms a genuinely fresh start, not merely "still running"; and the snapshot the backup wrote restores byte-for-byte. Also confirms discovery's grammar rejects `stop=true` combined with a stream backup as incompatible (found a real bug doing this, see "Bugs found and fixed" below). **Not proven**: a direct concurrent-write race (i.e. that data really can't change mid-backup while stopped). The test container has no writer process to race against, so this is still resting on `runBackupSteps`' code structure (fs backup runs strictly inside the stop/defer-start closure) rather than an empirical race demonstration. Also unproven: the `defaultStopTimeoutSeconds` (30s) SIGKILL-after-timeout fallback path itself. The test container responds to `SIGTERM` immediately (`--init` + `exec sleep`), so only the graceful-stop path has actually run. |
+| Podman adapter | **Integration-proven (compat API core paths) + partially unproven (see below)** | `run-podman.sh`: a real Podman 5.8 compat API socket (a self-contained nested Podman this itest stands up itself), driving `List`/`Inspect`/`Exec`/`Stop`/`Start`/`Watch` for real through `PodmanRuntime`'s shared `engineClient`. Proven: filesystem backup/restore byte-diffed against the real socket; the `io.podman.compose.*` compose-identity fallback (`podmanComposeIdentity`), specifically its no-`com.docker.compose.*`-present branch, via a real snapshot tag; the daemon's live `Watch` loop discovering a container via a real "start" event and firing a scheduled backup; and `Watch`'s "die or destroy" unregistration path, including the real bug this pass found and fixed (see "Bugs found and fixed" below). **Still not proven**: `Exec` against Podman (no itest here backs up a service via the exec/stream path, e.g. a DB dump, against Podman, only the filesystem-backup path, which never calls `Exec`); `Stop`/`Start` against Podman (no itest sets `ballast.stop=true` against a Podman-backed service, the way `run-stop.sh` does for Docker); the rootless per-user socket default (`defaultPodmanSocket`'s `XDG_RUNTIME_DIR`/`/run/user/<uid>` branches) and the rootful-default branch. This itest always passes an explicit `BALLAST_SOCKET`, so `NewPodman`'s own default-resolution logic has never executed under test, only been read; and `CONTAINER_HOST` env-var socket resolution (`internal/daemon`/`internal/cli`'s `podmanSocket`), which `run-podman.sh` also bypasses via the same explicit `BALLAST_SOCKET`. Also structurally unprovable by any itest here, and worth stating plainly: `engineClient.clientFor` hardcodes `"unix://"+socket` for both adapters, so a Podman deployment whose API is only reachable over TCP (no local socket at all) cannot be pointed at with `BALLAST_SOCKET` today. This is a real adapter limitation, not merely an untested path. |
 | Failure paths generally | **Partial** | The stream-dump failure path, the `exec.pre` failure path, the `stop`+stream discovery-rejection path, the `ballast.*`/`tagwright.backup.*` prefix-conflict rejection (`run-conflict.sh`), and the duplicate-service-name rejection (`run-dupe.sh`) are all integration-proven (see above). `exec`/`stop` used without their global gate is enforced by code every non-exec/non-stop itest run implicitly relies on not tripping, but no test deliberately triggers and asserts it. Secret-not-found, wrong repository password, and unreachable-backend failures are untested. |
 
 ## Bugs found and fixed
@@ -293,11 +293,11 @@ Writing the stream-dump failure-path check (`run-stream.sh`'s bogus
 `stream.<id>.command` case) found a real bug: a stream dump that exited
 non-zero could still leave a written snapshot in the repository, because
 `os.Pipe` (what Go's `os/exec` wires a generic `io.Reader` `Stdin` through)
-has no way to signal "the writer errored" to the reading end — only a plain
+has no way to signal "the writer errored" to the reading end, only a plain
 close, indistinguishable from a clean EOF. `restic` would see that as a
 normal (if short or empty) end of input, commit a snapshot, and exit 0,
 while the *Go-level* stdin-copy error still surfaced as `engine.Restic
-.Backup`'s own returned error — discarding the real snapshot ID along with
+.Backup`'s own returned error, discarding the real snapshot ID along with
 it, so nothing could clean it up.
 
 Fixed in `internal/engine/restic.go` (`Backup` now parses the summary out of
@@ -340,10 +340,10 @@ spec alongside a non-nil `validate()` error. `Discover`'s final branch
 returned a `nil` spec instead, so those call sites' `if s == nil { continue
 }` silently skipped straight past the very container being looked up, and
 the real validation error (label conflicts, `stop`+stream, exec/stop used
-without its gate — anything `validate()` rejects) was discarded in favor of
+without its gate, anything `validate()` rejects) was discarded in favor of
 a misleading "not found". The daemon's own discovery pass
 (`internal/daemon/watch.go`'s `discoverOne`) never hit this, since it only
-checks the error and never needs the spec on that path — which is exactly
+checks the error and never needs the spec on that path, which is exactly
 why it shipped unnoticed. Fixed in `internal/discovery/discovery.go` by
 returning `spec` (not `nil`) alongside the `validate()` error.
 
@@ -356,7 +356,7 @@ a container to trigger the conditions:
 **Fourth bug**: `normalizeLabels`' own conflict error (the same suffix set
 to different values under `ballast.*` and `tagwright.backup.*`) made
 `Discover` return a `nil` spec too, the identical failure mode the third bug
-above already fixed for `validate()`'s errors — just one call earlier, before
+above already fixed for `validate()`'s errors, just one call earlier, before
 a spec is even built. `run-conflict.sh` (written to prove the conflict is
 rejected at all) caught it immediately: `ballast backup <service>` reported
 "not found" instead of the real conflict. Fixed in
@@ -366,21 +366,21 @@ now resolves a best-effort `Service` identity from what doesn't depend on
 `resolveServiceName` both work against a `nil` map) and returns it alongside
 the error.
 
-**Fifth bug**: `config.Config.Exclude` — documented on the struct itself as
+**Fifth bug**: `config.Config.Exclude` (documented on the struct itself as
 "the global glob-exclude list, additive to any per-service `ballast.exclude`
 labels", parsed from `BALLAST_EXCLUDE` or `ballast.yml`, with its own env
-overlay code and default-handling — was never actually merged into any
+overlay code and default-handling) was never actually merged into any
 service's `BackupSpec.Excludes` anywhere in the codebase. A fully wired,
 fully documented setting that silently did nothing; nothing in the itest
 suite ever set it, so nothing ever noticed. Found while auditing
 `internal/discovery/discovery.go` for the `run-volumes.sh` excludes tests,
-not by a failing test (this one wasn't itest-covered before the fix either —
+not by a failing test (this one wasn't itest-covered before the fix either,
 see `TestDiscoverGlobalExcludeMergesWithLabel`). Fixed by merging
 `cfg.Exclude` with the service's own `ballast.exclude`/`ballast.exclude.<n>`
 in `Discover`.
 
 **Sixth bug**: a die/destroy lifecycle event silently unregistered a
-service's scheduled job — `internal/daemon/registry.go`'s
+service's scheduled job. `internal/daemon/registry.go`'s
 `unregisterContainer` removed it from both of `registry`'s maps and
 cancelled the scheduler entry, but logged nothing at all. `register` already
 logs on the way in, both the normal case (implicitly, via the scheduler) and
@@ -468,7 +468,7 @@ recognized `events.ActionDestroy` ("destroy") as a container-removal event.
 Confirmed directly against a live Podman 5.8 socket, not merely inferred
 from documentation (`curl --unix-socket <sock> http://localhost/v1.41/events`
 while removing a container): Podman's compat API emits `"Action":"remove"`
-for container removal, never `"destroy"` — a real, undocumented divergence
+for container removal, never `"destroy"`, a real, undocumented divergence
 from Docker's own event vocabulary, not a Podman bug (Podman's own native
 `podman events` output shows the identical "remove" verb, so this is
 Podman's real behavior, not a compat-layer quirk). Docker itself always
@@ -480,7 +480,7 @@ Podman even before this fix. The real gap: a container already stopped
 *before* the daemon starts watching (discovered via the initial
 `List(All:true)` pass in `discoverAll`, not a live "start" event, since
 `discoverOne` never filters by `Container.State`) and then removed fires
-only `"remove"`, with no `"die"` to fall back on — its scheduled job leaked
+only `"remove"`, with no `"die"` to fall back on. Its scheduled job leaked
 forever, silently, with the daemon's own logs showing nothing at all.
 Reproduced deliberately before fixing (a pre-fix build, built by stashing
 the fix, produced zero unregistration log output for this exact sequence)
@@ -525,7 +525,7 @@ reproduces the live scenario end to end against a real socket.
   `docker events` `die`) and restarted (`start`, a fresh `State.StartedAt`)
   around the backup, and that the resulting snapshot restores correctly.
   It does not (and structurally cannot, without a real writer process to
-  race) prove data can't change mid-backup while stopped — that still
+  race) prove data can't change mid-backup while stopped. That still
   rests on `runBackupSteps`' code structure, not an empirical race. The
   test container also responds to `SIGTERM` immediately, so the
   `defaultStopTimeoutSeconds` (30s) SIGKILL fallback path has never
@@ -535,7 +535,7 @@ reproduces the live scenario end to end against a real socket.
   `io.podman.compose.*` compose-identity fallback, and the daemon's watch
   loop (`start` discovery and the `die`/`remove`-as-destroy unregistration
   path, including the real `mapEventAction` bug this pass found and fixed
-  — see "Bugs found and fixed") against a real Podman 5.8 socket. Still
+  see "Bugs found and fixed") against a real Podman 5.8 socket. Still
   genuinely unproven: `Exec`/`Stop`/`Start` against Podman (no itest here
   exercises a stream/DB-dump backup or `ballast.stop` against a
   Podman-backed service, only Docker); `NewPodman`'s own rootless/rootful
