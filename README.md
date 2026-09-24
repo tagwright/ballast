@@ -2,7 +2,7 @@
 
 Label-driven backups for Docker Compose services. Ballast watches the
 container socket, reads `ballast.*` labels off your running services, and
-drives restic to back each one up. You describe what to back up in the
+drives [restic](https://restic.net) to back each one up. You describe what to back up in the
 compose file, next to the service it belongs to, and Ballast handles the
 rest.
 
@@ -80,7 +80,7 @@ The `/var/lib/docker/volumes` mount matters: Ballast maps a named volume's
 host-side path back to itself by default, so mounting it at the same path
 inside the Ballast container is what makes named-volume discovery work with
 zero configuration. See [ballast.example.yml](ballast.example.yml) if you
-also bind-mount host directories from outside the Docker volumes root; those
+also bind-mount host directories from outside the Docker volumes root. Those
 need an explicit `host_roots` entry.
 
 ## Releases
@@ -119,7 +119,7 @@ Ballast talks to Docker, so nothing changes for an existing Docker deploy.
 
 The socket path above is the rootful default. A rootless Podman socket lives
 at `$XDG_RUNTIME_DIR/podman/podman.sock`, typically
-`/run/user/<uid>/podman/podman.sock`; mount whichever one your Podman is
+`/run/user/<uid>/podman/podman.sock`. Mount whichever one your Podman is
 actually running, and Ballast finds it on its own with no `socket` setting
 needed. Set `socket:` in `ballast.yml` (or `BALLAST_SOCKET`) only to point at
 a nonstandard path.
@@ -210,7 +210,7 @@ notification tokens by name.
    age-keygen -o ballast-age-key.txt
    ```
 
-   This prints the matching public key (`age1...`) to stderr; keep both the
+   This prints the matching public key (`age1...`) to stderr. Keep both the
    private key file and that public value.
 
 2. Point SOPS at that public key with a `.sops.yaml` in the repo (or
@@ -290,8 +290,19 @@ yet:
 - restic is the only backup engine. The engine interface is designed to hold
   a second one, but nothing else implements it yet.
 
-Pin a version if you build on it; the label grammar can still change before
+Pin a version if you build on it. The label grammar can still change before
 a 1.0.
+
+## Documentation
+
+- The full `ballast.*` label reference: [docs/LABELS.md](docs/LABELS.md).
+- [docs/RECORDS.md](docs/RECORDS.md) describes the JSON run, verify, and check
+  records Ballast writes for every backup, for anyone parsing them downstream.
+- Read [docs/RECOVERY.md](docs/RECOVERY.md) before you need it: recovering a
+  repository password and restoring when the host, the stack, or Ballast itself
+  is gone.
+- [docs/TESTING.md](docs/TESTING.md) is the test methodology and a coverage
+  matrix that stays honest about what remains unproven.
 
 ## License
 
