@@ -303,6 +303,8 @@ a 1.0.
   is gone.
 - [docs/TESTING.md](docs/TESTING.md) is the test methodology and a coverage
   matrix that stays honest about what remains unproven.
+- [docs/SECURITY.md](docs/SECURITY.md) covers the master key, the socket's
+  reach, and how to report a vulnerability.
 
 ## License
 
