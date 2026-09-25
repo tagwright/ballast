@@ -23,7 +23,20 @@ Three layers, in increasing order of how much they actually prove:
    repository, and diff real bytes. Every object these scripts create is
    named `ballast-itest-*` (or tagged `ballast:itest`), never touches
    anything else on the host, and is torn down in a trap on exit (success,
-   failure, or interrupt). Eighteen scripts today:
+   failure, or interrupt).
+
+   `test/integration/run-all.sh` is the single harness entry point: it runs
+   `run.sh` and every scenario below in sequence and fails on the first break.
+   Both CI legs call it: `.github/workflows/ci-selfhosted.yml` runs it on every
+   push to `main` on the self-hosted tagwright runner (against that runner's
+   isolated privileged dind, never the production socket), and the release
+   workflow runs it at the tag it is publishing and refuses to publish if it
+   fails (`publish` `needs: harness`). Every scenario here drives a throwaway
+   backend and is CI-gated; there is no operator-run bucket, so
+   `test/integration/LAST-RUN` records `operator_run: none` and
+   `test/enforce/check-last-run.sh` passes it trivially. A real R2 bucket or
+   real Vanta, if ever exercised, would move into that operator-run bucket and
+   be attested at the release sha. Eighteen scenario scripts today:
 
    - `run.sh`: filesystem backup/restore against a local repo, plus a
      daemon scheduler smoke test (`@every 1m`, confirmed to fire a second
