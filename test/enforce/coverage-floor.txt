@@ -13,5 +13,12 @@
 # rounding:
 #   internal/daemon        measured 46.2%
 #   internal/orchestrator  measured 44.2%
-internal/daemon 46
+#
+# Ratchet bumps (a floor only ever rises):
+#   2026-09-25 internal/daemon 46 -> 62. Coverage had regressed to 44.8% after
+#   the boot-time runtime-capability guard (requireRuntimeCapabilities) landed
+#   uncovered; wiring tests were added for that guard, the socket/window/level
+#   config resolvers, BuildNotifier, and the handleEvent/watchLoop lifecycle
+#   path, raising measured coverage to 62.5%. Floored to 62.
+internal/daemon 62
 internal/orchestrator 44
