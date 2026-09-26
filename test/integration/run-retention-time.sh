@@ -15,7 +15,7 @@
 # internal/orchestrator/backup.go's runBackupSteps calls it) and asserts
 # the exact surviving snapshot set for RetentionPolicy{Daily: 3}.
 #
-# It runs that Go test inside a throwaway container (golang:1.25 plus a
+# It runs that Go test inside a throwaway container (golang:1.25.14 plus a
 # pinned restic binary, matching the version this repo's own Dockerfile
 # bundles) rather than assuming the host has a matching restic on PATH.
 # That container is the only Docker object this script creates, named
@@ -47,13 +47,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "running TestForgetKeepDailyTimeBased in a throwaway golang:1.25 + restic container"
+log "running TestForgetKeepDailyTimeBased in a throwaway golang:1.25.14 + restic container"
 docker run --rm --name "$RUNNER" \
   -e RESTIC_VERSION="$RESTIC_VERSION" \
   -e RESTIC_SHA256="$RESTIC_SHA256" \
   -v "$REPO_ROOT":/src:ro \
   -w /tmp/build \
-  golang:1.25 \
+  golang:1.25.14 \
   bash -euo pipefail -c '
     apt-get update -qq
     apt-get install -y -qq --no-install-recommends bzip2 ca-certificates wget >/dev/null
